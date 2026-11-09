@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Eclipse Revival</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="game"></div>
+
+    <!-- HUD durante la partida (RF15) -->
+    <div id="hud" class="hidden">
+      <div class="hud-top">
+        <div class="hud-round"><span id="hud-round">Ronda 1</span><span id="hud-timer">60</span></div>
+        <div id="hud-event" class="hud-event hidden"></div>
+        <div class="hud-stats"><span>💰 <b id="hud-gold">0</b></span><span>☠ <b id="hud-kills">0</b></span></div>
+      </div>
+      <div id="hud-boss" class="hud-boss hidden"><div class="boss-name" id="boss-name"></div><div class="bar"><div id="boss-bar"></div></div></div>
+      <div class="hud-xp"><div id="hud-xp-bar"></div><span id="hud-level">Nv 1</span></div>
+      <div class="hud-team" id="hud-team"></div>
+      <div class="hud-bottom">
+        <div class="hud-hp"><div class="bar hp"><div id="hud-hp-bar"></div></div><span id="hud-hp">100 / 100</span></div>
+        <div class="hud-loadout"><div id="hud-weapons" class="slots"></div><div id="hud-passives" class="slots"></div></div>
+      </div>
+      <div id="hud-pending" class="hud-pending hidden"></div>
+    </div>
+
+    <div id="announce" class="announce"></div>
+    <div id="toasts"></div>
+
+    <!-- Menú principal -->
+    <section id="menu" class="screen">
+      <div class="panel">
+        <h1 class="logo">Eclipse <span>Revival</span></h1>
+        <p class="tagline">Sobrevivan juntos hasta que vuelva la luz.</p>
+        <label>Tu nombre <input id="in-name" maxlength="16" placeholder="Jugador" /></label>
+        <div class="label">Personaje</div>
+        <div id="menu-chars" class="chars"></div>
+        <div class="row">
+          <div class="col">
+            <h3>Crear sala</h3>
+            <label>Mapa <select id="in-map"></select></label>
+            <label>Dificultad <select id="in-diff"></select></label>
+            <button id="btn-create" class="primary">Crear sala</button>
+          </div>
+          <div class="col">
+            <h3>Unirse a una sala</h3>
+            <label>Código <input id="in-code" maxlength="6" placeholder="ABC123" class="code-input" /></label>
+            <button id="btn-join">Unirse</button>
+            <p class="hint">Controles: WASD / flechas o mando. Las armas atacan solas.</p>
+          </div>
+        </div>
+        <p id="menu-error" class="error"></p>
+      </div>
+    </section>
+
+    <!-- Lobby de la sala (RF05–RF08) -->
+    <section id="lobby" class="screen hidden">
+      <div class="panel">
+        <div class="lobby-head">
+          <div>
+            <div class="label">Código de la sala</div>
+            <div id="lobby-code" class="big-code">------</div>
+          </div>
+          <button id="btn-copy">Copiar enlace</button>
+        </div>
+        <div class="row">
+          <div class="col">
+            <h3>Jugadores <span id="lobby-count"></span></h3>
+            <ul id="lobby-players" class="players"></ul>
+          </div>
+          <div class="col">
+            <h3>Partida</h3>
+            <label>Mapa <select id="lb-map"></select></label>
+            <label>Dificultad <select id="lb-diff"></select></label>
+            <p id="lb-map-desc" class="hint"></p>
+          </div>
+        </div>
+        <div class="label">Tu personaje</div>
+        <div id="lobby-chars" class="chars"></div>
+        <div class="actions">
+          <button id="btn-leave">Salir</button>
+          <button id="btn-ready">Estoy listo</button>
+          <button id="btn-start" class="primary">Iniciar partida</button>
+        </div>
+        <p id="lobby-error" class="error"></p>
+      </div>
+    </section>
+
+    <!-- Subir de nivel (RF23) -->
+    <section id="levelup" class="levelup hidden">
+      <h2>¡Subiste de nivel!</h2>
+      <p class="hint">Elige una mejora (teclas 1, 2, 3). El juego no se detiene.</p>
+      <div id="levelup-cards" class="cards"></div>
+    </section>
+
+    <!-- Fin de partida (RF34) -->
+    <section id="end" class="screen hidden">
+      <div class="panel">
+        <h1 id="end-title" class="logo">Victoria</h1>
+        <p id="end-sub" class="tagline"></p>
+        <table class="stats">
+          <thead><tr><th>Jugador</th><th>Nivel</th><th>Eliminados</th><th>Daño hecho</th><th>Daño recibido</th><th>Revividas</th></tr></thead>
+          <tbody id="end-stats"></tbody>
+        </table>
+        <div id="end-weapons" class="end-weapons"></div>
+        <div class="actions"><button id="btn-back" class="primary">Volver a la sala</button></div>
+      </div>
+    </section>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

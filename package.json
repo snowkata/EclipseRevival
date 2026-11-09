@@ -1,0 +1,29 @@
+{
+  "name": "eclipse-revival",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Eclipse Revival: juego web cooperativo de supervivencia por rondas (1 a 4 jugadores).",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n server,client -c magenta,cyan \"tsx watch src/server/index.ts\" \"vite\"",
+    "build": "vite build && esbuild src/server/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "express": "4.21.2",
+    "socket.io": "4.8.1"
+  },
+  "devDependencies": {
+    "@types/express": "4.17.21",
+    "@types/node": "22.10.2",
+    "concurrently": "9.1.2",
+    "esbuild": "0.24.2",
+    "phaser": "3.90.0",
+    "socket.io-client": "4.8.1",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2",
+    "vite": "5.4.11"
+  }
+}
