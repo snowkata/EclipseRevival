@@ -178,3 +178,11 @@ export const PARAMS = {
   sendRate: 20, // estados enviados por segundo (RNF06)
   maxPlayers: 4,
 };
+
+/** Nivel de cuenta necesario para cada personaje y arma (RF40). Lo que no aparece se desbloquea en el nivel 1. */
+export const CHARACTER_LEVEL_REQ: Record<number, number> = { 1: 1, 2: 1, 3: 3, 4: 6 };
+export const WEAPON_LEVEL_REQ: Record<number, number> = { 4: 3, 5: 5, 6: 8 };
+
+/** Atributos de las mejoras permanentes del taller (tabla mejora_permanente). */
+export type PermAttr = 'vida' | 'dano' | 'velocidad' | 'iman' | 'armadura' | 'suerte' | 'oro' | 'revivir';
+export type PermBonus = Partial<Record<PermAttr, number>>;

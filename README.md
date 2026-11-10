@@ -4,7 +4,7 @@ Videojuego web cooperativo de supervivencia por rondas (1 a 4 jugadores). Las ar
 
 ## Cómo ejecutarlo
 
-Requiere Node.js 20 o superior.
+Requiere Node.js 22 o superior.
 
 ```bash
 npm install
@@ -21,6 +21,24 @@ npm start          # sirve el juego compilado en http://localhost:3000
 npm test           # pruebas de la simulación
 npm run typecheck
 ```
+
+## Base de datos y cuentas
+
+Sin base de datos el juego funciona en **modo invitado** (todo desbloqueado, nada se guarda). Para tener cuentas, progreso y clasificación:
+
+1. Crea las tablas: en Supabase abre **SQL Editor**, pega el contenido de `db/eclipse_revival.sql` y pulsa **Run**.
+2. Copia `.env.example` como `.env` y llena `DATABASE_URL`, `DATABASE_CA_FILE` y `JWT_SECRET` (el archivo explica dónde encontrar cada dato).
+3. Arranca el servidor. Al iniciar muestra `Base de datos: conectada`.
+
+Con cuentas activas:
+
+- Registro e inicio de sesión (contraseñas con bcrypt, sesión de 24 h). También se puede jugar como invitado, sin guardar progreso.
+- Cada partida terminada se guarda con sus rondas, elecciones de nivel y estadísticas por arma.
+- Al terminar se gana experiencia de cuenta y oro. El oro se gasta en el **Taller** en mejoras permanentes.
+- Personajes y armas se desbloquean con el nivel de cuenta; el siguiente mapa al completar el anterior y el modo Difícil al completar Normal. En una sala manda el progreso del anfitrión.
+- Clasificación por mapa y dificultad, e historial de partidas.
+
+Las pruebas de `tests/db.test.ts` solo corren si existe `DATABASE_URL`; úsalas con una base de pruebas, no con la real.
 
 ## Controles
 
@@ -43,15 +61,16 @@ El arte es provisional: se dibuja con código mientras se diseñan los sprites.
 
 ## Pendiente
 
-- Cuentas, guardado de partidas, clasificación y progresión permanente en PostgreSQL (Supabase).
+- Leer los valores de armas, enemigos y mapas desde la base de datos, y el panel de administración.
 - Eventos Cazador de recompensa, Cofre maldito y Escolta; peligros de cada mapa; los 3 mapas restantes.
-- Arte, sonido y música definitivos. Panel de administración.
+- Arte, sonido y música definitivos.
 
 ## Estructura
 
 ```
 src/shared/   datos del juego, fórmulas y mensajes (los usan cliente y servidor)
-src/server/   Node.js + Socket.IO: salas (rooms.ts) y simulación (game.ts)
+src/server/   Node.js + Socket.IO: salas (rooms.ts), simulación (game.ts), cuentas (accounts.ts) y guardado (persist.ts)
+db/           script SQL de la base de datos
 src/client/   Phaser 3 + interfaz HTML (menú, lobby, HUD)
 tests/        pruebas de la simulación
 ```

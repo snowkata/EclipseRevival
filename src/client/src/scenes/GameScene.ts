@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { ELEMENTS, PARAMS, characterById, enemyById, mapById, passiveById, weaponById, type ElementId } from '../../../shared/data.js';
+import { ELEMENTS, PARAMS, enemyById, mapById, weaponById, type ElementId } from '../../../shared/data.js';
 import { orbitAngle, orbitCount } from '../../../shared/formulas.js';
 import type { FxEvent, PlayerSnap, Snapshot } from '../../../shared/protocol.js';
 import { socket } from '../net.js';
@@ -276,10 +276,7 @@ export class GameScene extends Phaser.Scene {
     if (pad && (Math.abs(pad.leftStick.x) > 0.2 || Math.abs(pad.leftStick.y) > 0.2)) { dx = pad.leftStick.x; dy = pad.leftStick.y; }
     const len = Math.hypot(dx, dy);
     if (len > 0) {
-      const ch = characterById(p.character);
-      let bonus = ch.bonus.velocidad ?? 0;
-      for (const [id, lvl] of p.passives) { const d = passiveById(id); if (d.attr === 'velocidad') bonus += (d.perLevel * lvl) / 100; }
-      const speed = ch.speed * (1 + bonus) * Math.min(1, len) / len;
+      const speed = (p.speed * Math.min(1, len)) / len;
       this.me.x = Phaser.Math.Clamp(this.me.x + dx * speed * dt, 16, W - 16);
       this.me.y = Phaser.Math.Clamp(this.me.y + dy * speed * dt, 16, W - 16);
     }

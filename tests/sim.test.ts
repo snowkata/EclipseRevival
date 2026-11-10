@@ -52,3 +52,13 @@ test('la partida siempre termina con un resultado', () => {
   assert.ok(over, 'la partida terminó');
   assert.equal(over!.stats.length, 4);
 });
+
+test('progresión de cuenta y costos del taller', async () => {
+  const { accountXpToNext, applyAccountXp, matchAccountXp, upgradeCost } = await import('../src/shared/formulas.js');
+  assert.equal(accountXpToNext(1), 100);
+  assert.deepEqual(applyAccountXp(1, 50, 260), { level: 3, xp: 10 }); // 310 = 100 + 200 + 10
+  assert.equal(matchAccountXp(10, true, 0.8), 320);
+  assert.equal(matchAccountXp(4, false, 1), 80);
+  assert.equal(upgradeCost(100, 1.5, 0), 100);
+  assert.equal(upgradeCost(100, 1.5, 2), 225);
+});

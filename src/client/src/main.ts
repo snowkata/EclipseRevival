@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
-import { CHARACTERS, DIFFICULTIES, MAPS, characterById, difficultyById, mapById, passiveById, weaponById } from '../../shared/data.js';
+import { CHARACTERS, CHARACTER_LEVEL_REQ, DIFFICULTIES, MAPS, characterById, difficultyById, mapById, passiveById, weaponById } from '../../shared/data.js';
 import type { Announcement, GameOver, Snapshot, UpgradeOption } from '../../shared/protocol.js';
+import { accountLevel, initAccount, refreshProfile, session } from './account.js';
 import { loadSession, saveSession, socket } from './net.js';
 import { GameScene, bossHp, bossName } from './scenes/GameScene.js';
 import { state } from './state.js';
@@ -35,16 +36,20 @@ fillSelects($('in-map'), $('in-diff'));
 fillSelects($('lb-map'), $('lb-diff'));
 
 function renderChars(containerId: string) {
+  if (charLocked(myChar)) myChar = 1;
   $(containerId).innerHTML = CHARACTERS.map((c) => `
-    <div class="char ${c.id === myChar ? 'sel' : ''}" data-id="${c.id}">
+    <div class="char ${c.id === myChar ? 'sel' : ''} ${charLocked(c.id) ? 'locked' : ''}" data-id="${c.id}">
       <span class="dot" style="background:#${c.color.toString(16).padStart(6, '0')}"></span><b>${c.name}</b>
+      ${charLocked(c.id) ? `<span class="lock">🔒 Nivel de cuenta ${CHARACTER_LEVEL_REQ[c.id]}</span>` : ''}
       <small>❤ ${c.hp} · 👟 ${c.speed}<br>${c.ability}<br>Arma: ${weaponById(c.startWeapon).name}</small>
     </div>`).join('');
 }
+/** RF40: los personajes se desbloquean con el nivel de cuenta (solo si el servidor tiene cuentas). */
+const charLocked = (id: number) => session.enabled && (CHARACTER_LEVEL_REQ[id] ?? 1) > accountLevel();
 for (const id of ['menu-chars', 'lobby-chars']) {
   $(id).addEventListener('click', (ev) => {
     const el = (ev.target as HTMLElement).closest<HTMLElement>('.char');
-    if (!el) return;
+    if (!el || el.classList.contains('locked')) return;
     myChar = Number(el.dataset.id);
     localStorage.setItem('er:char', String(myChar));
     renderChars('menu-chars');
@@ -55,6 +60,7 @@ for (const id of ['menu-chars', 'lobby-chars']) {
 renderChars('menu-chars');
 
 const myName = () => {
+  if (session.profile) return session.profile.account.displayName;
   const n = nameInput.value.trim() || 'Jugador';
   localStorage.setItem('er:name', n);
   return n;
@@ -116,10 +122,24 @@ function renderLobby() {
   $('lobby-players').innerHTML = l.players.map((p) => {
     const c = characterById(p.character);
     const tag = p.host ? 'Anfitrión' : p.ready ? '<span class="ready">Listo</span>' : 'Esperando…';
+    const acc = p.guest ? (session.enabled ? ' · invitado' : '') : ` · Nv ${p.accountLevel}`;
     return `<li><span class="dot" style="display:inline-block;width:14px;height:14px;border-radius:50%;background:#${c.color.toString(16).padStart(6, '0')}"></span>
-      <b>${esc(p.name)}</b> <small>${c.name}</small>${p.connected ? '' : ' <small>(desconectado)</small>'}<span class="tag">${tag}</span></li>`;
+      <b>${esc(p.name)}</b> <small>${c.name}${acc}</small>${p.connected ? '' : ' <small>(desconectado)</small>'}<span class="tag">${tag}</span></li>`;
   }).join('');
   const mapSel = $<HTMLSelectElement>('lb-map'), diffSel = $<HTMLSelectElement>('lb-diff');
+  // RF38: solo se pueden elegir los mapas y dificultades que el anfitrión tiene desbloqueados
+  for (const o of mapSel.options) {
+    const m = MAPS.find((x) => x.id === Number(o.value))!;
+    const open = l.unlocked.some(([id]) => id === m.id);
+    o.disabled = !open;
+    o.textContent = m.name + (!m.available ? ' (próximamente)' : open ? '' : ' 🔒');
+  }
+  for (const o of diffSel.options) {
+    const d = DIFFICULTIES.find((x) => x.id === Number(o.value))!;
+    const open = l.unlocked.some(([m, id]) => m === l.mapId && id === d.id);
+    o.disabled = !open;
+    o.textContent = `${d.name} · ${d.rounds} rondas${open ? '' : ' 🔒'}`;
+  }
   mapSel.value = String(l.mapId); diffSel.value = String(l.difficultyId);
   mapSel.disabled = diffSel.disabled = !isHost;
   const d = difficultyById(l.difficultyId);
@@ -274,7 +294,20 @@ socket.on('gameOver', (r: GameOver) => {
   const m = Math.floor(r.seconds / 60), sec = String(r.seconds % 60).padStart(2, '0');
   $('end-sub').textContent = `${mapById(r.mapId).name} · ${difficultyById(r.difficultyId).name} · Ronda ${r.round}/${r.totalRounds} · ${m}:${sec} · ${r.gold} de oro`;
   $('end-stats').innerHTML = r.stats.map((p) => `<tr><td>${esc(p.name)} <small>(${characterById(p.character).name})</small></td><td>${p.level}</td><td>${p.kills}</td><td>${p.damageDealt}</td><td>${p.damageTaken}</td><td>${p.revives}</td></tr>`).join('');
+  $('end-reward').textContent = session.enabled && !session.profile ? 'Jugaste como invitado: inicia sesión para guardar tu progreso.' : '';
   $('end-weapons').innerHTML = r.stats.map((p) => `<div><b>${esc(p.name)}</b>: ${p.weaponDamage.sort((a, b) => b[1] - a[1]).map(([id, d]) => `${weaponById(id).name} ${d}`).join(' · ') || '—'}</div>`).join('');
   showScreen('end');
 });
 $('btn-back').onclick = () => socket.emit('backToLobby');
+
+// Recompensa de cuenta al terminar la partida (RF37)
+socket.on('reward', (r) => {
+  $('end-reward').textContent = `Tu cuenta: +${r.xp} XP · +${r.gold} de oro${r.leveledUp ? ` · ¡Subiste al nivel ${r.level}!` : ''}`;
+  void refreshProfile();
+});
+
+// Cuenta: al iniciar o cerrar sesión se vuelven a dibujar los personajes disponibles
+void initAccount(() => {
+  renderChars('menu-chars');
+  if (state.lobby) renderLobby();
+});

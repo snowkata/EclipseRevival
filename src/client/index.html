@@ -36,7 +36,8 @@
       <div class="panel">
         <h1 class="logo">Eclipse <span>Revival</span></h1>
         <p class="tagline">Sobrevivan juntos hasta que vuelva la luz.</p>
-        <label>Tu nombre <input id="in-name" maxlength="16" placeholder="Jugador" /></label>
+        <div id="account-bar" class="account-bar"></div>
+        <label id="name-field">Tu nombre <input id="in-name" maxlength="16" placeholder="Jugador" /></label>
         <div class="label">Personaje</div>
         <div id="menu-chars" class="chars"></div>
         <div class="row">
@@ -107,7 +108,16 @@
           <tbody id="end-stats"></tbody>
         </table>
         <div id="end-weapons" class="end-weapons"></div>
+        <div id="end-reward" class="end-reward"></div>
         <div class="actions"><button id="btn-back" class="primary">Volver a la sala</button></div>
+      </div>
+    </section>
+
+    <!-- Ventanas de cuenta: sesión, taller, clasificación, historial y perfil -->
+    <section id="modal" class="screen modal hidden">
+      <div class="panel">
+        <button id="modal-close" class="close" aria-label="Cerrar">✕</button>
+        <div id="modal-body"></div>
       </div>
     </section>
 

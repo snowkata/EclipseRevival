@@ -31,3 +31,23 @@ export const ORBIT_SPEED = 3.2;
 export function orbitAngle(t: number, i: number, count: number): number {
   return t * ORBIT_SPEED + (i * Math.PI * 2) / count;
 }
+
+/** Experiencia de cuenta necesaria para pasar del nivel `level` al siguiente. */
+export const accountXpToNext = (level: number) => 100 * level;
+
+/** Aplica experiencia de cuenta y devuelve el nuevo nivel y la experiencia restante. */
+export function applyAccountXp(level: number, xp: number, gained: number): { level: number; xp: number } {
+  xp += gained;
+  while (xp >= accountXpToNext(level)) { xp -= accountXpToNext(level); level++; }
+  return { level, xp };
+}
+
+/** RF37: experiencia de cuenta según resultado, ronda alcanzada y modo. */
+export function matchAccountXp(round: number, victory: boolean, mReward: number): number {
+  return Math.round((round * 20 + (victory ? 200 : 0)) * mReward);
+}
+
+/** Costo del siguiente nivel de una mejora permanente (nivel actual 0 = primera compra). */
+export function upgradeCost(base: number, increment: number, currentLevel: number): number {
+  return Math.round(base * Math.pow(increment, currentLevel));
+}
