@@ -499,7 +499,7 @@ INSERT INTO parametro_juego (clave, valor, descripcion) VALUES
 
 -- Vista de la tabla de clasificación por mapa y modo (RF36):
 -- primero las victorias por menor tiempo, después las derrotas por ronda alcanzada.
-CREATE VIEW v_clasificacion AS
+CREATE VIEW v_clasificacion WITH (security_invoker = true) AS
 SELECT p.id_partida, m.nombre AS mapa, d.nombre AS modo, p.resultado, p.ronda_alcanzada, p.num_jugadores,
        EXTRACT(EPOCH FROM (p.fecha_fin - p.fecha_inicio))::INT AS duracion_seg,
        string_agg(u.nombre_visible, ', ' ORDER BY u.nombre_visible) AS equipo,
