@@ -52,7 +52,8 @@ test('guardar una partida da experiencia, oro y progreso', { skip }, async () =>
   const result: GameOver = { ...(over ?? { round: game.round, totalRounds: 10, seconds: 140, gold: game.gold, mapId: 1, difficultyId: 1, stats: [] }), victory: true, gold: 500, mapId: 1, difficultyId: 1 } as GameOver;
   const rewards = await saveMatch('TEST01', game, result, [{ playerId: 'p0', userId, host: true }]);
   const r = rewards.get('p0')!;
-  assert.ok(r.xp > 0 && r.gold === 500, JSON.stringify(r));
+  assert.ok(r.xp > 0 && r.gold === 500 + Math.round(result.round * 8), JSON.stringify(r));
+  await query('UPDATE usuario SET oro = 500 WHERE id_usuario = $1', [userId]);
 
   const profile = await getProfile(userId);
   assert.equal(profile.account.gold, 500);

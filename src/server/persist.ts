@@ -40,7 +40,9 @@ export async function saveMatch(code: string, game: Game, result: GameOver, part
     for (const part of present) {
       const p = game.players.get(part.playerId)!;
       const xp = matchAccountXp(result.round, result.victory, diff.mReward);
-      const gold = Math.round(result.gold * (1 + (p.perm.oro ?? 0) / 100)); // mejora Codicia
+      // Oro recogido por el equipo más un premio por cada ronda alcanzada; la mejora Codicia lo aumenta
+      const baseGold = result.gold + Math.round(result.round * 10 * diff.mReward);
+      const gold = Math.round(baseGold * (1 + (p.perm.oro ?? 0) / 100));
       const row = await c.query<{ id_participacion: number }>(
         `INSERT INTO participacion (id_partida, id_usuario, id_personaje, es_anfitrion, nivel_final, enemigos_eliminados,
                                     dano_recibido, companeros_revividos, oro_ganado, xp_cuenta_ganada)
