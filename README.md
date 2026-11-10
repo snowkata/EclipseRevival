@@ -54,7 +54,7 @@ Las pruebas de `tests/db.test.ts` solo corren si existe `DATABASE_URL`; úsalas 
 - 4 personajes, 6 armas (proyectil, órbita, aura, rayo y área), 4 evoluciones, 8 pasivas, combos elementales entre jugadores.
 - Rondas de 60 s, tres dificultades (10, 15 y 20 rondas), jefe cada 5 rondas y jefe final.
 - 2 mapas jugables (Bosque Marchito y Ciudad en Ruinas); los otros 3 aparecen como "próximamente".
-- 2 eventos especiales: Eclipse total y Lluvia de meteoros.
+- 5 eventos especiales: Eclipse total, Lluvia de meteoros, Cazador de recompensa, Cofre maldito y Escolta. Los tres últimos tienen un objetivo y solo dan recompensa si se cumple.
 - Gemas de experiencia compartidas, objetos (oro, botiquín, imán, bomba, cofre) y pantalla de resultados.
 
 El arte es provisional: se dibuja con código mientras se diseñan los sprites.
@@ -62,7 +62,7 @@ El arte es provisional: se dibuja con código mientras se diseñan los sprites.
 ## Pendiente
 
 - Leer los valores de armas, enemigos y mapas desde la base de datos, y el panel de administración.
-- Eventos Cazador de recompensa, Cofre maldito y Escolta; peligros de cada mapa; los 3 mapas restantes.
+- Peligros de cada mapa y los 3 mapas restantes.
 - Arte, sonido y música definitivos.
 
 ## Estructura

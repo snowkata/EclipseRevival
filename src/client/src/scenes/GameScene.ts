@@ -35,6 +35,7 @@ export class GameScene extends Phaser.Scene {
   private snapAt = 0;
   private seenTick = 0;
   private following = false;
+  private escortImg?: Phaser.GameObjects.Image;
 
   constructor() {
     super('game');
@@ -46,6 +47,7 @@ export class GameScene extends Phaser.Scene {
     this.pools.clear(); this.orbs = []; this.bolts = []; this.texts = []; this.activeTexts = 0;
     this.me.ready = false;
     this.following = false;
+    this.escortImg = undefined;
 
     const map = mapById(state.mapId);
     this.cameras.main.setBackgroundColor(map.ground);
@@ -133,7 +135,8 @@ export class GameScene extends Phaser.Scene {
       const e = m as Moving & { type: number };
       e.type = arr[i + 1];
       const st = arr[i + 5];
-      if (st & 1) m.img.setTint(0x9ad9ff); else if (st & 4) m.img.setTint(0xa5ff7a); else if (st & 2) m.img.setTint(0xffa07a); else m.img.clearTint();
+      if (st & 1) m.img.setTint(0x9ad9ff); else if (st & 4) m.img.setTint(0xa5ff7a); else if (st & 2) m.img.setTint(0xffa07a); else if (st & 8) m.img.setTint(0xff7a9a); else m.img.clearTint();
+      m.img.setScale(st & 8 ? 1.7 : 1); // los élites son más grandes
     });
     this.syncFlat(s.projectiles, 4, this.projectiles, tick, (type) => (type === 101 ? 'proj-101' : type === 6 ? 'proj-6' : type >= 50 ? `proj-${type}` : 'proj-1'), 7);
     this.syncFlat(s.pickups, 4, this.pickups, tick, (type) => (type < 10 ? `gem-${type}` : `item-${type}`), 4);
@@ -257,6 +260,7 @@ export class GameScene extends Phaser.Scene {
 
     this.drawWeapons(serverT);
     this.drawZones(s);
+    this.drawEvent(s, serverT);
     this.drawBolts(dt);
     this.drawDarkness(s);
   }
@@ -335,6 +339,33 @@ export class GameScene extends Phaser.Scene {
         g.fillStyle(0xff6a00, 0.15 + p * 0.35).fillCircle(x, y, r * p);
       }
     }
+  }
+
+  /** Marcas de los eventos con objetivo: jugador perseguido, superviviente y zona de rescate. */
+  private drawEvent(s: Snapshot, t: number) {
+    const g = this.zoneG;
+    const hunted = s.hunted ? this.players.get(s.hunted) : undefined;
+    if (hunted) g.lineStyle(3, 0xff3b6b, 0.6 + Math.sin(t * 6) * 0.3).strokeCircle(hunted.root.x, hunted.root.y, 34);
+    const e = s.escort;
+    if (!this.escortImg) this.escortImg = this.add.image(0, 0, 'escort').setDepth(6).setVisible(false);
+    this.escortImg.setVisible(!!e);
+    if (!e) return;
+    const [x, y, hp, zx, zy] = e;
+    const k = this.escortImg.visible && this.escortImg.x ? 0.2 : 1;
+    this.escortImg.setPosition(this.escortImg.x + (x - this.escortImg.x) * k, this.escortImg.y + (y - this.escortImg.y) * k);
+    const ex = this.escortImg.x, ey = this.escortImg.y;
+    g.fillStyle(0x000000, 0.6).fillRect(ex - 18, ey + 20, 36, 5);
+    g.fillStyle(0x6ee7a8, 1).fillRect(ex - 18, ey + 20, 36 * (hp / 100), 5);
+    g.lineStyle(2, 0x6ee7a8, 0.25).strokeCircle(ex, ey, 220); // hay que quedarse dentro para que avance
+    g.fillStyle(0x6ee7a8, 0.12 + Math.sin(t * 3) * 0.05).fillCircle(zx, zy, 70);
+    g.lineStyle(4, 0x6ee7a8, 0.9).strokeCircle(zx, zy, 70);
+    // Flecha desde el superviviente hacia la zona de rescate
+    const a = Math.atan2(zy - ey, zx - ex);
+    const ax = ex + Math.cos(a) * 50, ay = ey + Math.sin(a) * 50;
+    g.fillStyle(0x6ee7a8, 0.9).fillTriangle(
+      ax + Math.cos(a) * 16, ay + Math.sin(a) * 16,
+      ax + Math.cos(a + 2.4) * 10, ay + Math.sin(a + 2.4) * 10,
+      ax + Math.cos(a - 2.4) * 10, ay + Math.sin(a - 2.4) * 10);
   }
 
   private drawBolts(dt: number) {

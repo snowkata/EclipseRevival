@@ -216,7 +216,8 @@ function renderHud(s: Snapshot) {
   $('hud-timer').textContent = s.roundLeft < 0 ? '∞' : String(s.roundLeft);
   $('hud-gold').textContent = String(s.gold);
   $('hud-kills').textContent = String(s.kills);
-  const ev = s.event === 'eclipse' ? '🌑 Eclipse total' : s.event === 'meteoros' ? '☄ Lluvia de meteoros' : '';
+  const evName = s.event ? EVENT_LABEL[s.event] : '';
+  const ev = evName + (s.eventGoal === true ? ' · ✔ cumplido' : s.eventGoal === false ? ' · objetivo pendiente' : '');
   $('hud-event').textContent = ev;
   show('hud-event', !!ev);
   const bn = bossName(s);
@@ -238,6 +239,10 @@ function renderHud(s: Snapshot) {
     <div class="mate ${p.down ? 'down' : ''}">${esc(p.name)} · Nv ${p.level}${p.down ? ' · <b>CAÍDO</b>' : ''}${p.connected ? '' : ' · desconectado'}
       <div class="bar"><div style="width:${(p.hp / p.maxHp) * 100}%"></div></div></div>`).join('');
 }
+const EVENT_LABEL: Record<string, string> = {
+  eclipse: '🌑 Eclipse total', meteoros: '☄ Lluvia de meteoros', cazador: '🎯 Cazador de recompensa',
+  cofre: '💀 Cofre maldito', escolta: '🛡 Escolta',
+};
 const short = (n: string) => n.split(' ').map((w) => w[0]).join('').slice(0, 3).toUpperCase();
 
 // ---------- Subir de nivel ----------

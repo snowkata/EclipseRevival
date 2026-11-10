@@ -32,7 +32,7 @@ export interface Snapshot {
   event: EventId | null;
   gold: number; kills: number;
   players: PlayerSnap[];
-  /** Enemigos en arreglo plano: [id, tipo, x, y, vida% (0..100), estado (bit 1 = lento, 2 = quemado, 4 = envenenado)] */
+  /** Enemigos en arreglo plano: [id, tipo, x, y, vida% (0..100), estado (bit 1 = lento, 2 = quemado, 4 = envenenado, 8 = élite)] */
   enemies: number[];
   /** Proyectiles: [id, tipo, x, y] (tipo: 1 pistola, 6 hoja, 101 ocaso, 50 enemigo, 51 jefe) */
   projectiles: number[];
@@ -41,6 +41,12 @@ export interface Snapshot {
   /** Zonas en el suelo: [id, tipo, x, y, radio, segundosRestantes] (tipo 1 = veneno, 2 = meteoro) */
   zones: number[];
   bossId: number | null;
+  /** Evento con objetivo: null = solo sobrevivir, false = pendiente, true = cumplido */
+  eventGoal: boolean | null;
+  /** Jugador perseguido en el evento Cazador de recompensa */
+  hunted: string | null;
+  /** Evento Escolta: [x, y, vida%, zonaX, zonaY] del superviviente y la zona de rescate */
+  escort: number[] | null;
 }
 
 export type FxEvent =

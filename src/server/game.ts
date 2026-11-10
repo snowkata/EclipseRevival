@@ -12,7 +12,7 @@ import { SpatialGrid } from './grid.js';
 
 const W = PARAMS.worldSize;
 const PLAYER_R = 16;
-const ITEM_TYPES: ItemKind[] = ['oro', 'curar', 'iman', 'bomba', 'cofre'];
+const ITEM_TYPES: ItemKind[] = ['oro', 'curar', 'iman', 'bomba', 'cofre', 'cofre_maldito'];
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const pick = <T>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
@@ -41,6 +41,8 @@ interface Enemy {
   last: { el: ElementId; pid: string; t: number } | null;
   atkCd: number; summonCd: number; dashT: number; windT: number; dx: number; dy: number;
   final: boolean; lastHitBy: string | null;
+  /** Élite de un evento y, si es el cazador, el jugador al que persigue */
+  elite: boolean; hunt: string | null;
 }
 
 interface Projectile {
@@ -87,8 +89,15 @@ export class Game {
   gold = 0;
   kills = 0;
   event: EventId | null = null;
-  nextEventRound = 3;
+  // Para probar eventos en desarrollo: ER_FIRST_EVENT_ROUND=1 ER_FORCE_EVENT=escolta
+  nextEventRound = Number(process.env.ER_FIRST_EVENT_ROUND) || 3;
   meteorCd = 0;
+  // Eventos con objetivo (RF29–RF31)
+  eventGoal: boolean | null = null;
+  private eventElites = new Set<number>();
+  private cursedOpened = false;
+  hunted: string | null = null;
+  escort: { x: number; y: number; hp: number; maxHp: number; zx: number; zy: number } | null = null;
   bossId: number | null = null;
   finished = false;
   private tickCount = 0;
@@ -260,14 +269,17 @@ export class Game {
 
   private startRound(n: number) {
     // Recompensa del evento que termina (RF32)
-    if (this.event && this.anyoneAlive()) {
+    const eventOk = this.anyoneAlive() && this.eventGoal !== false;
+    if (this.event && !eventOk && this.anyoneAlive()) this.cb.toast('Evento fallido: no se cumplió el objetivo');
+    if (this.event && eventOk) {
       const def = EVENTS.find((e) => e.id === this.event)!;
       const g = Math.round(def.gold * this.diff.mReward);
       this.gold += g;
       for (const p of this.players.values()) if (p.connected) { p.pending++; this.offerNext(p); }
       this.cb.toast(`Evento superado: +${g} de oro y una mejora extra`);
     }
-    this.closeRoundLog(this.anyoneAlive());
+    this.closeRoundLog(eventOk);
+    this.endEvent();
     this.event = null;
     this.round = n;
     this.roundLeft = PARAMS.roundSeconds;
@@ -292,15 +304,105 @@ export class Game {
       }
     }
     if (n >= this.nextEventRound) {
-      const ev = pick([...EVENTS]);
+      const ev = EVENTS.find((e) => e.id === process.env.ER_FORCE_EVENT) ?? pick([...EVENTS]);
       this.event = ev.id;
       log.type = 'evento';
       log.event = ev.id;
       this.nextEventRound = n + Math.round(rand(PARAMS.eventMin, PARAMS.eventMax));
       this.cb.announce({ title: ev.name, subtitle: ev.goal, tone: 'event' });
+      this.beginEvent(ev.id);
       return;
     }
     this.cb.announce({ title: `Ronda ${n}`, subtitle: `de ${this.totalRounds}`, tone: 'round' });
+  }
+
+  // ---------- Eventos con objetivo ----------
+  /** Tipo de enemigo más fuerte de la ronda actual, para los élites de los eventos. */
+  private eliteDef(): EnemyDef {
+    const rules = this.map.spawns.filter((s) => s.role === 'normal' && s.from <= this.round && (s.to == null || this.round <= s.to));
+    const best = rules.sort((a, b) => enemyById(b.enemy).hp - enemyById(a.enemy).hp)[0];
+    return enemyById(best?.enemy ?? 1);
+  }
+
+  private spawnElite(x: number, y: number): Enemy {
+    const e = this.spawnEnemy(this.eliteDef(), clamp(x, 20, W - 20), clamp(y, 20, W - 20), false, true);
+    this.eventElites.add(e.id);
+    return e;
+  }
+
+  private beginEvent(id: EventId) {
+    const alive = [...this.players.values()].filter((p) => p.connected && !p.down);
+    const anchor = alive.length ? pick(alive) : null;
+    if (id === 'eclipse' || id === 'meteoros' || !anchor) return; // solo hay que sobrevivir
+    this.eventGoal = false;
+    const a = Math.random() * Math.PI * 2;
+    if (id === 'cazador') {
+      // RF29: un élite persigue a un jugador elegido al azar
+      this.hunted = anchor.id;
+      const e = this.spawnElite(anchor.x + Math.cos(a) * 700, anchor.y + Math.sin(a) * 700);
+      e.hunt = anchor.id;
+      this.cb.toast(`El cazador va por ${anchor.name}. ¡Protéjanlo!`);
+    } else if (id === 'cofre') {
+      // RF30: el cofre libera una horda de élites al abrirse
+      this.dropItem('cofre_maldito', clamp(anchor.x + Math.cos(a) * 320, 60, W - 60), clamp(anchor.y + Math.sin(a) * 320, 60, W - 60));
+    } else if (id === 'escolta') {
+      // RF31: el superviviente camina hacia la zona de rescate mientras haya un jugador cerca
+      const hp = Math.round(150 * (1 + 0.1 * this.round));
+      let zx = anchor.x + Math.cos(a) * 1000, zy = anchor.y + Math.sin(a) * 1000;
+      if (zx < 150 || zx > W - 150) zx = anchor.x - Math.cos(a) * 1000;
+      if (zy < 150 || zy > W - 150) zy = anchor.y - Math.sin(a) * 1000;
+      this.escort = { x: anchor.x + 50, y: anchor.y, hp, maxHp: hp, zx: Math.round(clamp(zx, 150, W - 150)), zy: Math.round(clamp(zy, 150, W - 150)) };
+    }
+  }
+
+  private completeEvent() {
+    this.eventGoal = true;
+    this.hunted = null;
+    this.escort = null;
+    this.cb.announce({ title: '¡Objetivo cumplido!', subtitle: 'Recibirán la recompensa al terminar la ronda', tone: 'info' });
+  }
+
+  /** Limpia lo que quedó del evento al cambiar de ronda. Los élites que sigan vivos se quedan como enemigos normales. */
+  private endEvent() {
+    this.eventGoal = null;
+    this.eventElites.clear();
+    this.cursedOpened = false;
+    this.hunted = null;
+    this.escort = null;
+    this.pickups = this.pickups.filter((g) => g.type !== 10 + ITEM_TYPES.indexOf('cofre_maldito'));
+    for (const e of this.enemies.values()) e.hunt = null;
+  }
+
+  private openCursedChest(p: SimPlayer) {
+    if (this.event !== 'cofre' || this.cursedOpened) return;
+    this.cursedOpened = true;
+    const n = 3 + this.activeCount;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      this.spawnElite(p.x + Math.cos(a) * 320, p.y + Math.sin(a) * 320);
+    }
+    this.fxQueue.push({ k: 'boom', x: p.x, y: p.y, r: 320, color: 0x8f6bff });
+    this.cb.announce({ title: '¡El cofre estaba maldito!', subtitle: `Derroten a los ${n} élites`, tone: 'danger' });
+  }
+
+  private updateEscort(dt: number) {
+    const s = this.escort;
+    if (!s || this.event !== 'escolta' || this.eventGoal !== false) return;
+    const guarded = [...this.players.values()].some((p) => p.connected && !p.down && dist2(p.x, p.y, s.x, s.y) < 220 * 220);
+    const dx = s.zx - s.x, dy = s.zy - s.y, d = Math.hypot(dx, dy) || 1;
+    if (d < 70) return void this.completeEvent();
+    if (guarded) { s.x += (dx / d) * 85 * dt; s.y += (dy / d) * 85 * dt; }
+    // Los enemigos que lo tocan le hacen daño
+    let hits = 0;
+    for (const e of this.grid.query(s.x, s.y, 60, this.scratch)) {
+      if (hits >= 3) break;
+      if (dist2(e.x, e.y, s.x, s.y) < (e.def.radius + 18) ** 2) { s.hp -= e.dmg * dt; hits++; }
+    }
+    if (s.hp <= 0) {
+      this.escort = null;
+      this.fxQueue.push({ k: 'death', x: s.x, y: s.y, color: 0x6ee7a8, big: false });
+      this.cb.toast('El superviviente cayó. Evento fallido.');
+    }
   }
 
   private anyoneAlive() {
@@ -315,13 +417,13 @@ export class Game {
     return { x: clamp(anchor.x + Math.cos(a) * d, 20, W - 20), y: clamp(anchor.y + Math.sin(a) * d, 20, W - 20) };
   }
 
-  private spawnEnemy(def: EnemyDef, x: number, y: number, final = false): Enemy {
+  private spawnEnemy(def: EnemyDef, x: number, y: number, final = false, elite = false): Enemy {
     const players = this.activeCount;
-    const maxHp = enemyHp(def.hp, this.round, players, this.diff);
+    const maxHp = enemyHp(def.hp, this.round, players, this.diff) * (elite ? 8 : 1);
     const e: Enemy = {
-      id: this.nextId++, def, x, y, hp: maxHp, maxHp, dmg: def.damage * this.diff.mDmg * (1 + 0.04 * this.round),
+      id: this.nextId++, def, x, y, hp: maxHp, maxHp, dmg: def.damage * this.diff.mDmg * (1 + 0.04 * this.round) * (elite ? 1.5 : 1),
       slowT: 0, burnT: 0, burnDps: 0, poisonT: 0, poisonDps: 0, stunT: 0, last: null,
-      atkCd: rand(1, 2.5), summonCd: rand(3, 6), dashT: 0, windT: 0, dx: 0, dy: 0, final, lastHitBy: null,
+      atkCd: rand(1, 2.5), summonCd: rand(3, 6), dashT: 0, windT: 0, dx: 0, dy: 0, final, lastHitBy: null, elite, hunt: null,
     };
     this.enemies.set(e.id, e);
     return e;
@@ -403,7 +505,10 @@ export class Game {
     if (kp) { kp.kills++; if (weapon > 0) kp.weaponKills.set(weapon, (kp.weaponKills.get(weapon) ?? 0) + 1); }
     const luck = 1 + (kp?.perm.suerte ?? 0) / 100; // la mejora Suerte aumenta el botín
     this.fxQueue.push({ k: 'death', x: e.x, y: e.y, color: e.def.color, big: e.def.boss });
-    this.dropGem(e.x, e.y, e.def.xp);
+    this.dropGem(e.x, e.y, e.def.xp * (e.elite ? 10 : 1));
+    if (e.elite) this.dropItem('oro', e.x, e.y);
+    if (this.eventElites.delete(e.id) && this.eventElites.size === 0 && this.eventGoal === false
+      && (this.event === 'cazador' || (this.event === 'cofre' && this.cursedOpened))) this.completeEvent();
     for (const [item, prob] of LOOT[e.def.id] ?? []) {
       if (Math.random() < prob * luck) this.dropItem(item, e.x + rand(-20, 20), e.y + rand(-20, 20));
     }
@@ -561,6 +666,7 @@ export class Game {
       this.waveCd = PARAMS.waveInterval;
       this.spawnWave();
     }
+    this.updateEscort(dt);
     if (this.event === 'meteoros') {
       this.meteorCd -= dt;
       if (this.meteorCd <= 0) {
@@ -683,7 +789,8 @@ export class Game {
       e.slowT -= dt;
       if (e.stunT > 0) { e.stunT -= dt; continue; }
 
-      const target = this.targetPlayer(e.x, e.y);
+      const prey = e.hunt ? this.players.get(e.hunt) : undefined;
+      const target = prey && !prey.down && prey.connected ? prey : this.targetPlayer(e.x, e.y);
       if (!target) continue;
       const dx = target.x - e.x, dy = target.y - e.y;
       const d = Math.hypot(dx, dy) || 1;
@@ -794,6 +901,7 @@ export class Game {
           if (dist2(p.x, p.y, e.x, e.y) < 450 * 450) this.damageEnemy(e, e.def.boss ? 200 : value, 1, p.id, 0, 0, false);
         break;
       case 'cofre': this.openChest(p); break;
+      case 'cofre_maldito': this.openCursedChest(p); break;
     }
   }
 
@@ -846,7 +954,7 @@ export class Game {
     const enemies: number[] = [];
     for (const e of this.enemies.values())
       enemies.push(e.id, e.def.id, Math.round(e.x), Math.round(e.y), Math.max(0, Math.ceil((e.hp / e.maxHp) * 100)),
-        (e.slowT > 0 ? 1 : 0) | (e.burnT > 0 ? 2 : 0) | (e.poisonT > 0 ? 4 : 0));
+        (e.slowT > 0 ? 1 : 0) | (e.burnT > 0 ? 2 : 0) | (e.poisonT > 0 ? 4 : 0) | (e.elite ? 8 : 0));
     const projectiles: number[] = [];
     for (const p of this.projectiles) projectiles.push(p.id, p.type, Math.round(p.x), Math.round(p.y));
     const pickups: number[] = [];
@@ -857,6 +965,8 @@ export class Game {
       t: Math.round(this.time * 1000) / 1000, round: this.round, totalRounds: this.totalRounds,
       roundLeft: this.round >= this.totalRounds ? -1 : Math.max(0, Math.ceil(this.roundLeft)),
       event: this.event, gold: this.gold, kills: this.kills, players, enemies, projectiles, pickups, zones, bossId: this.bossId,
+      eventGoal: this.event ? this.eventGoal : null, hunted: this.hunted,
+      escort: this.escort ? [Math.round(this.escort.x), Math.round(this.escort.y), Math.ceil((this.escort.hp / this.escort.maxHp) * 100), this.escort.zx, this.escort.zy] : null,
     });
     if (this.fxQueue.length) { this.cb.fx(this.fxQueue); this.fxQueue = []; }
   }

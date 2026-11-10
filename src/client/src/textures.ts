@@ -123,6 +123,19 @@ export function makeTextures(scene: Phaser.Scene) {
     g.fillStyle(0xffd54f, 1).fillRect(14, 8, 6, 8);
   });
 
+  simple('item-15', 34, 28, (g) => {
+    g.fillStyle(0x3b1d5e, 1).fillRoundedRect(1, 6, 32, 21, 4);
+    g.fillStyle(0x5a2d8f, 1).fillRoundedRect(1, 1, 32, 10, 4);
+    g.fillStyle(0xff3b6b, 1).fillCircle(17, 12, 4);
+  });
+  // Superviviente del evento Escolta
+  simple('escort', 40, 40, (g) => {
+    g.fillStyle(0x000000, 0.35).fillEllipse(20, 33, 30, 10);
+    g.fillStyle(0x6ee7a8, 1).fillCircle(20, 20, 14);
+    g.lineStyle(3, 0xffffff, 1).strokeCircle(20, 20, 14);
+    g.fillStyle(0x1b1530, 1).fillCircle(15, 19, 2.5).fillCircle(25, 19, 2.5);
+  });
+
   // Luz para el evento Eclipse total
   const light = t.createCanvas('light', 512, 512);
   if (light) {
