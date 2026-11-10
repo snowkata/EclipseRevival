@@ -5,6 +5,8 @@ import { accountLevel, initAccount, refreshProfile, session } from './account.js
 import { loadSession, saveSession, socket } from './net.js';
 import { GameScene, bossHp, bossName } from './scenes/GameScene.js';
 import { state } from './state.js';
+import { isMuted, setMuted, sfx, unlockAudio } from './sfx.js';
+import { makeTextures } from './textures.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -14,13 +16,34 @@ const show = (id: string, on: boolean) => $(id).classList.toggle('hidden', !on);
 const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
-  backgroundColor: '#07060d',
+  backgroundColor: '#05050d',
   scale: { mode: Phaser.Scale.RESIZE, width: window.innerWidth, height: window.innerHeight },
   input: { gamepad: true },
   render: { antialias: true },
   scene: [],
 });
 game.scene.add('game', GameScene, false);
+// Los dibujos se generan al arrancar para poder usarlos también como retratos en el menú
+const portraits = new Map<number, string>();
+game.scene.add('boot', {
+  create(this: Phaser.Scene) {
+    makeTextures(this);
+    for (const c of CHARACTERS) portraits.set(c.id, this.textures.getBase64(`player-${c.id}`));
+    renderChars('menu-chars');
+    if (state.lobby) renderChars('lobby-chars');
+    this.scene.stop();
+  },
+}, true);
+
+// ---------- Sonido ----------
+const muteBtn = $('btn-mute');
+const paintMute = () => { muteBtn.textContent = isMuted() ? '🔇' : '🔊'; muteBtn.classList.toggle('off', isMuted()); };
+const toggleMute = () => { setMuted(!isMuted()); paintMute(); sfx('click'); };
+muteBtn.onclick = toggleMute;
+paintMute();
+window.addEventListener('pointerdown', unlockAudio);
+window.addEventListener('keydown', unlockAudio);
+document.addEventListener('click', (ev) => { if ((ev.target as HTMLElement).closest('button, .char, select')) sfx('click'); });
 
 // ---------- Menú ----------
 let myChar = Number(localStorage.getItem('er:char') ?? 1) || 1;
@@ -39,9 +62,10 @@ function renderChars(containerId: string) {
   if (charLocked(myChar)) myChar = 1;
   $(containerId).innerHTML = CHARACTERS.map((c) => `
     <div class="char ${c.id === myChar ? 'sel' : ''} ${charLocked(c.id) ? 'locked' : ''}" data-id="${c.id}">
-      <span class="dot" style="background:#${c.color.toString(16).padStart(6, '0')}"></span><b>${c.name}</b>
+      <span class="portrait" style="--c:#${c.color.toString(16).padStart(6, '0')}">${portraits.has(c.id) ? `<img src="${portraits.get(c.id)}" alt="">` : '<i></i>'}</span>
+      <b>${c.name}</b><span class="stats-line">❤ ${c.hp} · 👟 ${c.speed}</span>
       ${charLocked(c.id) ? `<span class="lock">🔒 Nivel de cuenta ${CHARACTER_LEVEL_REQ[c.id]}</span>` : ''}
-      <small>❤ ${c.hp} · 👟 ${c.speed}<br>${c.ability}<br>Arma: ${weaponById(c.startWeapon).name}</small>
+      <small>${c.ability}<br>Arma: ${weaponById(c.startWeapon).name}</small>
     </div>`).join('');
 }
 /** RF40: los personajes se desbloquean con el nivel de cuenta (solo si el servidor tiene cuentas). */
@@ -269,6 +293,7 @@ $('levelup-cards').addEventListener('click', (ev) => {
 });
 window.addEventListener('keydown', (ev) => {
   if (!state.inGame) return;
+  if (ev.key === 'm' || ev.key === 'M') toggleMute();
   if (ev.key === '1' || ev.key === '2' || ev.key === '3') choose(Number(ev.key) - 1);
   if (ev.key === 'f' || ev.key === 'F') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); }
 });
@@ -279,6 +304,7 @@ socket.on('announce', (a: Announcement) => {
   const el = $('announce');
   el.className = `announce show ${a.tone}`;
   el.innerHTML = `<h2>${esc(a.title)}</h2>${a.subtitle ? `<p>${esc(a.subtitle)}</p>` : ''}`;
+  sfx(a.tone === 'boss' ? 'boss' : a.tone === 'event' || a.tone === 'danger' ? 'event' : 'round');
   clearTimeout(announceTimer);
   announceTimer = window.setTimeout(() => el.classList.remove('show'), 3200);
 });
@@ -296,6 +322,8 @@ socket.on('disconnect', () => { if (state.lobby) toast('Conexión perdida. Recon
 socket.on('gameOver', (r: GameOver) => {
   state.inGame = false;
   $('end-title').textContent = r.victory ? 'Victoria' : 'Derrota';
+  $('end-title').classList.toggle('lose', !r.victory);
+  sfx(r.victory ? 'victory' : 'defeat');
   const m = Math.floor(r.seconds / 60), sec = String(r.seconds % 60).padStart(2, '0');
   $('end-sub').textContent = `${mapById(r.mapId).name} · ${difficultyById(r.difficultyId).name} · Ronda ${r.round}/${r.totalRounds} · ${m}:${sec} · ${r.gold} de oro`;
   $('end-stats').innerHTML = r.stats.map((p) => `<tr><td>${esc(p.name)} <small>(${characterById(p.character).name})</small></td><td>${p.level}</td><td>${p.kills}</td><td>${p.damageDealt}</td><td>${p.damageTaken}</td><td>${p.revives}</td></tr>`).join('');

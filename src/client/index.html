@@ -4,8 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Eclipse Revival</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="theme-color" content="#05050d" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800;900&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
@@ -22,11 +24,13 @@
       <div class="hud-xp"><div id="hud-xp-bar"></div><span id="hud-level">Nv 1</span></div>
       <div class="hud-team" id="hud-team"></div>
       <div class="hud-bottom">
-        <div class="hud-hp"><div class="bar hp"><div id="hud-hp-bar"></div></div><span id="hud-hp">100 / 100</span></div>
+        <div class="hud-hp"><span class="heart">❤</span><div class="bar hp"><div id="hud-hp-bar"></div></div><span id="hud-hp">100 / 100</span></div>
         <div class="hud-loadout"><div id="hud-weapons" class="slots"></div><div id="hud-passives" class="slots"></div></div>
       </div>
       <div id="hud-pending" class="hud-pending hidden"></div>
     </div>
+
+    <button id="btn-mute" class="mute" title="Sonido (M)" aria-label="Activar o silenciar el sonido">🔊</button>
 
     <div id="announce" class="announce"></div>
     <div id="toasts"></div>
@@ -34,7 +38,28 @@
     <!-- Menú principal -->
     <section id="menu" class="screen">
       <div class="panel">
-        <h1 class="logo">Eclipse <span>Revival</span></h1>
+        <div class="brand">
+          <svg class="emblem" viewBox="0 0 120 120" aria-hidden="true">
+            <defs>
+              <radialGradient id="lg-glow" cx="50%" cy="50%" r="50%">
+                <stop offset="52%" stop-color="#ffc247" stop-opacity=".9" />
+                <stop offset="72%" stop-color="#ff7a3d" stop-opacity=".4" />
+                <stop offset="100%" stop-color="#ff5d8f" stop-opacity="0" />
+              </radialGradient>
+              <linearGradient id="lg-ring" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0" stop-color="#ff7a3d" /><stop offset=".6" stop-color="#ffc247" /><stop offset="1" stop-color="#fff6dc" />
+              </linearGradient>
+            </defs>
+            <circle class="corona" cx="60" cy="60" r="56" fill="url(#lg-glow)" />
+            <g class="rays" stroke="#ffc247" stroke-width="1.6" stroke-linecap="round" opacity=".55">
+              <path d="M60 2v10M60 108v10M2 60h10M108 60h10M19 19l7 7M94 94l7 7M19 101l7-7M94 26l7-7" />
+            </g>
+            <circle cx="60" cy="60" r="36" fill="none" stroke="url(#lg-ring)" stroke-width="3.5" />
+            <circle cx="57" cy="63" r="34.5" fill="#05050d" />
+            <path class="flare" d="M86 22l3.5 10.5L100 36l-10.5 3.5L86 50l-3.5-10.5L72 36l10.5-3.5z" fill="#fffaf0" />
+          </svg>
+          <h1 class="logo"><span class="w1">Eclipse</span><span class="w2">Revival</span></h1>
+        </div>
         <p class="tagline">Sobrevivan juntos hasta que vuelva la luz.</p>
         <div id="account-bar" class="account-bar"></div>
         <label id="name-field">Tu nombre <input id="in-name" maxlength="16" placeholder="Jugador" /></label>
@@ -51,7 +76,7 @@
             <h3>Unirse a una sala</h3>
             <label>Código <input id="in-code" maxlength="6" placeholder="ABC123" class="code-input" /></label>
             <button id="btn-join">Unirse</button>
-            <p class="hint">Controles: WASD / flechas o mando. Las armas atacan solas.</p>
+            <p class="hint">Controles: WASD / flechas o mando. Las armas atacan solas. M silencia el sonido, F pantalla completa.</p>
           </div>
         </div>
         <p id="menu-error" class="error"></p>
@@ -101,7 +126,7 @@
     <!-- Fin de partida (RF34) -->
     <section id="end" class="screen hidden">
       <div class="panel">
-        <h1 id="end-title" class="logo">Victoria</h1>
+        <h1 id="end-title" class="title">Victoria</h1>
         <p id="end-sub" class="tagline"></p>
         <table class="stats">
           <thead><tr><th>Jugador</th><th>Nivel</th><th>Eliminados</th><th>Daño hecho</th><th>Daño recibido</th><th>Revividas</th></tr></thead>

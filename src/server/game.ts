@@ -8,10 +8,11 @@ import {
 } from '../shared/data.js';
 import { enemiesPerWave, enemyHp, orbitAngle, orbitCount, weaponLevelMult, xpToNext } from '../shared/formulas.js';
 import type { Announcement, FxEvent, GameOver, PlayerSnap, Snapshot, UpgradeOption } from '../shared/protocol.js';
+import { ObstacleField, PLAYER_RADIUS } from '../shared/world.js';
 import { SpatialGrid } from './grid.js';
 
 const W = PARAMS.worldSize;
-const PLAYER_R = 16;
+const PLAYER_R = PLAYER_RADIUS;
 const ITEM_TYPES: ItemKind[] = ['oro', 'curar', 'iman', 'bomba', 'cofre', 'cofre_maldito'];
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -80,6 +81,8 @@ export class Game {
   pickups: Pickup[] = [];
   zones: Zone[] = [];
   grid = new SpatialGrid<Enemy>(80);
+  /** Árboles, rocas y ruinas del mapa: bloquean a jugadores, enemigos y disparos */
+  field!: ObstacleField;
   private scratch: Enemy[] = [];
   private nextId = 1;
   time = 0;
@@ -106,6 +109,7 @@ export class Game {
 
   constructor(mapId: number, difficultyId: number, players: StartPlayer[], private cb: GameCallbacks) {
     this.map = mapById(mapId);
+    this.field = new ObstacleField(this.map.id);
     this.diff = difficultyById(difficultyId);
     players.forEach((p, i) => {
       const char = characterById(p.character);
@@ -165,6 +169,7 @@ export class Game {
     const k = d > max ? max / d : 1;
     p.x = clamp(p.x + dx * k, PLAYER_R, W - PLAYER_R);
     p.y = clamp(p.y + dy * k, PLAYER_R, W - PLAYER_R);
+    this.field.resolve(p, PLAYER_R);
   }
 
   choose(id: string, index: number) {
@@ -352,6 +357,9 @@ export class Game {
       if (zx < 150 || zx > W - 150) zx = anchor.x - Math.cos(a) * 1000;
       if (zy < 150 || zy > W - 150) zy = anchor.y - Math.sin(a) * 1000;
       this.escort = { x: anchor.x + 50, y: anchor.y, hp, maxHp: hp, zx: Math.round(clamp(zx, 150, W - 150)), zy: Math.round(clamp(zy, 150, W - 150)) };
+      const zone = this.field.resolve({ x: this.escort.zx, y: this.escort.zy }, 40);
+      this.escort.zx = Math.round(zone.x); this.escort.zy = Math.round(zone.y);
+      this.field.resolve(this.escort, 14);
     }
   }
 
@@ -391,7 +399,7 @@ export class Game {
     const guarded = [...this.players.values()].some((p) => p.connected && !p.down && dist2(p.x, p.y, s.x, s.y) < 220 * 220);
     const dx = s.zx - s.x, dy = s.zy - s.y, d = Math.hypot(dx, dy) || 1;
     if (d < 70) return void this.completeEvent();
-    if (guarded) { s.x += (dx / d) * 85 * dt; s.y += (dy / d) * 85 * dt; }
+    if (guarded) { s.x += (dx / d) * 85 * dt; s.y += (dy / d) * 85 * dt; this.field.resolve(s, 14); }
     // Los enemigos que lo tocan le hacen daño
     let hits = 0;
     for (const e of this.grid.query(s.x, s.y, 60, this.scratch)) {
@@ -425,6 +433,7 @@ export class Game {
       slowT: 0, burnT: 0, burnDps: 0, poisonT: 0, poisonDps: 0, stunT: 0, last: null,
       atkCd: rand(1, 2.5), summonCd: rand(3, 6), dashT: 0, windT: 0, dx: 0, dy: 0, final, lastHitBy: null, elite, hunt: null,
     };
+    if (!def.boss) this.field.resolve(e, def.radius);
     this.enemies.set(e.id, e);
     return e;
   }
@@ -522,11 +531,13 @@ export class Game {
       const near = this.pickups.find((g) => g.type < 10 && dist2(g.x, g.y, x, y) < 100 * 100);
       if (near) { near.value += xp; near.type = near.value >= 5 ? 2 : near.value >= 2 ? 1 : 0; return; }
     }
-    this.pickups.push({ id: this.nextId++, type: xp >= 5 ? 2 : xp >= 2 ? 1 : 0, x, y, value: xp, pull: null });
+    const at = this.field.resolve({ x, y }, 12);
+    this.pickups.push({ id: this.nextId++, type: xp >= 5 ? 2 : xp >= 2 ? 1 : 0, x: at.x, y: at.y, value: xp, pull: null });
   }
 
   private dropItem(item: ItemKind, x: number, y: number) {
-    this.pickups.push({ id: this.nextId++, type: 10 + ITEM_TYPES.indexOf(item), x, y, value: ITEMS[item].value, pull: null });
+    const at = this.field.resolve({ x, y }, 16);
+    this.pickups.push({ id: this.nextId++, type: 10 + ITEM_TYPES.indexOf(item), x: at.x, y: at.y, value: ITEMS[item].value, pull: null });
   }
 
   private hurtPlayer(p: SimPlayer, dmg: number, ignoreCd = false) {
@@ -727,6 +738,7 @@ export class Game {
       pr.y += pr.vy * dt;
       pr.life -= dt;
       if (pr.life <= 0 || pr.x < 0 || pr.y < 0 || pr.x > W || pr.y > W) continue;
+      if (this.field.blocked(pr.x, pr.y, 3)) continue; // los obstáculos detienen los disparos
       let alive = true;
       if (pr.owner === null) {
         for (const p of this.players.values()) {
@@ -850,6 +862,7 @@ export class Game {
       }
       e.x = clamp(e.x + mx * speed * dt + px * 0.3, 0, W);
       e.y = clamp(e.y + my * speed * dt + py * 0.3, 0, W);
+      if (!e.def.boss) this.field.resolve(e, e.def.radius * 0.8); // los jefes aplastan lo que encuentran
 
       // Daño por contacto
       if (d < e.def.radius + PLAYER_R + 2) this.hurtPlayer(target, e.dmg);

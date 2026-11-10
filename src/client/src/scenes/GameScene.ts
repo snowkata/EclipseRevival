@@ -4,9 +4,13 @@ import { orbitAngle, orbitCount } from '../../../shared/formulas.js';
 import type { FxEvent, PlayerSnap, Snapshot } from '../../../shared/protocol.js';
 import { socket } from '../net.js';
 import { state } from '../state.js';
-import { makeTextures } from '../textures.js';
+import { makeTextures, OBSTACLE_ART } from '../textures.js';
+import { ObstacleField, obstaclesFor, PLAYER_RADIUS } from '../../../shared/world.js';
+import { sfx } from '../sfx.js';
 
 const W = PARAMS.worldSize;
+/** Lo que está más abajo en pantalla se dibuja encima (árboles, enemigos y jugadores). */
+const ydepth = (y: number) => 5 + y / W;
 
 interface PlayerView {
   root: Phaser.GameObjects.Container; body: Phaser.GameObjects.Image; label: Phaser.GameObjects.Text;
@@ -36,6 +40,10 @@ export class GameScene extends Phaser.Scene {
   private seenTick = 0;
   private following = false;
   private escortImg?: Phaser.GameObjects.Image;
+  private field!: ObstacleField;
+  private lastHp = 0;
+  private lastXp = -1;
+  private walk = 0;
 
   constructor() {
     super('game');
@@ -56,12 +64,14 @@ export class GameScene extends Phaser.Scene {
     const border = this.add.graphics().setDepth(1);
     border.lineStyle(6, 0x8f6bff, 0.5).strokeRect(0, 0, W, W);
 
-    const rnd = new Phaser.Math.RandomDataGenerator([`deco-${map.id}`]);
-    for (let i = 0; i < 160; i++) {
-      const x = rnd.between(40, W - 40), y = rnd.between(40, W - 40);
-      if (Math.hypot(x - W / 2, y - W / 2) < 260) continue;
-      this.add.image(x, y, `deco-${map.id}`).setDepth(2).setScale(rnd.realInRange(0.7, 1.4)).setAlpha(0.9);
+    // Obstáculos y decoración: la misma lista que usa el servidor para las colisiones
+    this.field = new ObstacleField(map.id);
+    for (const o of obstaclesFor(map.id)) {
+      const a = OBSTACLE_ART[o.kind];
+      this.add.image(o.x, o.y, `obs-${map.id}-${o.kind}`).setOrigin(a.ox / a.w, a.oy / a.h).setScale(o.s)
+        .setDepth(o.r > 0 ? ydepth(o.y) : 2);
     }
+    this.lastHp = 0; this.lastXp = -1;
 
     this.zoneG = this.add.graphics().setDepth(3);
     this.fxG = this.add.graphics().setDepth(9);
@@ -117,10 +127,16 @@ export class GameScene extends Phaser.Scene {
     for (const p of s.players) {
       let v = this.players.get(p.id);
       if (!v) v = this.createPlayer(p);
+      const prevLevel = v.snap.level;
       v.snap = p;
       v.tx = p.x; v.ty = p.y;
       if (p.id === state.you) {
         const off = Math.hypot(this.me.x - p.x, this.me.y - p.y);
+        if (this.me.ready) {
+          if (p.hp < this.lastHp - 0.5 && !p.down) sfx('hurt');
+          if (this.lastXp >= 0 && (p.xp > this.lastXp || p.level > prevLevel)) sfx('gem');
+        }
+        this.lastHp = p.hp; this.lastXp = p.xp;
         if (!this.me.ready || p.down || off > 220) {
           this.me.x = p.x; this.me.y = p.y; this.me.ready = true;
           if (!this.following) { this.following = true; this.cameras.main.startFollow(v.root, true, 0.15, 0.15); }
@@ -149,6 +165,7 @@ export class GameScene extends Phaser.Scene {
       let m = map.get(id);
       if (!m) {
         m = { img: this.take(key(arr[i + 1]), depth), tx: arr[i + 2], ty: arr[i + 3], seen: tick };
+        if (map === this.projectiles && this.onScreen(arr[i + 2], arr[i + 3])) sfx('shoot');
         m.img.setPosition(arr[i + 2], arr[i + 3]);
         map.set(id, m);
       }
@@ -156,6 +173,11 @@ export class GameScene extends Phaser.Scene {
       extra?.(m, arr, i);
     }
     for (const [id, m] of map) if (m.seen !== tick) { this.give(m.img); map.delete(id); }
+  }
+
+  private onScreen(x: number, y: number) {
+    const v = this.cameras.main.worldView;
+    return x > v.x - 40 && x < v.right + 40 && y > v.y - 40 && y < v.bottom + 40;
   }
 
   private createPlayer(p: PlayerSnap): PlayerView {
@@ -171,32 +193,38 @@ export class GameScene extends Phaser.Scene {
   private onFx = (list: FxEvent[]) => {
     for (const f of list) {
       switch (f.k) {
-        case 'hit': this.damageNumber(f.x, f.y, f.dmg, ELEMENTS[f.el as ElementId]?.color ?? '#fff', f.crit); break;
-        case 'bolt': this.bolts.push({ pts: f.pts, color: hex(ELEMENTS[f.el as ElementId].color), life: 0.2 }); break;
-        case 'boom': this.boom(f.x, f.y, f.r, f.color, f.label); break;
+        case 'hit': if (this.onScreen(f.x, f.y)) sfx(f.crit ? 'crit' : 'hit'); this.damageNumber(f.x, f.y, f.dmg, ELEMENTS[f.el as ElementId]?.color ?? '#fff', f.crit); break;
+        case 'bolt': sfx('bolt'); this.bolts.push({ pts: f.pts, color: hex(ELEMENTS[f.el as ElementId].color), life: 0.2 }); break;
+        case 'boom': if (this.onScreen(f.x, f.y)) sfx('boom'); this.boom(f.x, f.y, f.r, f.color, f.label); break;
         case 'death': {
           const c = this.add.circle(f.x, f.y, f.big ? 60 : 12, f.color, 0.7).setDepth(4);
           this.tweens.add({ targets: c, scale: f.big ? 3 : 2, alpha: 0, duration: f.big ? 900 : 300, onComplete: () => c.destroy() });
-          if (f.big) this.cameras.main.shake(400, 0.01);
+          if (f.big) { this.cameras.main.shake(400, 0.01); sfx('boom'); } else if (this.onScreen(f.x, f.y)) sfx('kill');
           break;
         }
         case 'levelup': {
           const v = this.players.get(f.id);
           if (v) this.floatText(v.root.x, v.root.y - 50, '¡Nivel!', '#ffb547', 20);
+          if (f.id === state.you) sfx('levelup');
           break;
         }
         case 'evolve': {
           const v = this.players.get(f.id);
           if (v) this.boom(v.root.x, v.root.y, 160, 0xffb547, weaponById(f.weapon).name);
+          sfx('evolve');
           break;
         }
         case 'revive': {
           const v = this.players.get(f.id);
           if (v) this.floatText(v.root.x, v.root.y - 50, '¡Revivido!', '#6ee7a8', 18);
+          sfx('revive');
           break;
         }
-        case 'pickup': if (f.item === 'bomba') this.cameras.main.flash(200, 255, 255, 255); break;
-        case 'down': if (f.id === state.you) this.cameras.main.shake(300, 0.012); break;
+        case 'pickup':
+          if (f.item === 'bomba') this.cameras.main.flash(200, 255, 255, 255);
+          if (this.onScreen(f.x, f.y)) sfx(f.item === 'oro' ? 'gold' : 'item');
+          break;
+        case 'down': if (f.id === state.you) this.cameras.main.shake(300, 0.012); sfx('down'); break;
       }
     }
   };
@@ -233,11 +261,19 @@ export class GameScene extends Phaser.Scene {
     const k = 1 - Math.exp(-dt * 14);
 
     this.moveLocal(dt);
+    this.walk += dt;
 
     for (const [id, v] of this.players) {
+      const ox = v.root.x, oy = v.root.y;
       if (id === state.you) v.root.setPosition(this.me.x, this.me.y);
       else v.root.setPosition(v.root.x + (v.tx - v.root.x) * k, v.root.y + (v.ty - v.root.y) * k);
       const p = v.snap;
+      // Animación sencilla: mira hacia donde camina y da pequeños saltos al moverse
+      const mvx = v.root.x - ox, moving = Math.hypot(mvx, v.root.y - oy) > 0.4 && !p.down;
+      if (Math.abs(mvx) > 0.3) v.body.setFlipX(mvx < 0);
+      v.body.y = moving ? -Math.abs(Math.sin(this.walk * 11)) * 3 : 0;
+      v.body.setRotation(p.down ? Math.PI / 2 : 0);
+      v.root.setDepth(ydepth(v.root.y) + 0.0001);
       v.root.setAlpha(p.down || !p.connected ? 0.45 : 1);
       v.bar.clear();
       v.bar.fillStyle(0x000000, 0.6).fillRect(-18, 22, 36, 5);
@@ -250,6 +286,7 @@ export class GameScene extends Phaser.Scene {
       const nx = m.img.x + (m.tx - m.img.x) * k;
       if (Math.abs(nx - m.img.x) > 0.3) m.img.setFlipX(nx < m.img.x);
       m.img.setPosition(nx, m.img.y + (m.ty - m.img.y) * k);
+      m.img.setDepth(ydepth(m.img.y));
     }
     const kp = 1 - Math.exp(-dt * 25);
     for (const m of this.projectiles.values()) {
@@ -283,6 +320,7 @@ export class GameScene extends Phaser.Scene {
       const speed = (p.speed * Math.min(1, len)) / len;
       this.me.x = Phaser.Math.Clamp(this.me.x + dx * speed * dt, 16, W - 16);
       this.me.y = Phaser.Math.Clamp(this.me.y + dy * speed * dt, 16, W - 16);
+      this.field.resolve(this.me, PLAYER_RADIUS);
     }
     this.me.sendAcc += dt;
     if (this.me.sendAcc >= 1 / 30) {

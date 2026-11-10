@@ -147,3 +147,22 @@ test('evento Escolta: falla si los enemigos derrotan al superviviente', () => {
   assert.equal(game.escort, null);
   assert.equal(game.eventGoal, false);
 });
+
+test('obstáculos: lista determinista, centro libre y colisión', async () => {
+  const { obstaclesFor, ObstacleField, PLAYER_RADIUS } = await import('../src/shared/world.js');
+  const { PARAMS } = await import('../src/shared/data.js');
+  for (const mapId of [1, 2]) {
+    const list = obstaclesFor(mapId);
+    const solids = list.filter((o) => o.r > 0);
+    assert.ok(solids.length >= 60, `mapa ${mapId}: pocos obstáculos (${solids.length})`);
+    assert.ok(list.length > solids.length, 'debe haber decoración sin colisión');
+    const c = PARAMS.worldSize / 2;
+    assert.ok(solids.every((o) => Math.hypot(o.x - c, o.y - c) >= 280 - 1), 'el centro queda libre');
+    const field = new ObstacleField(mapId);
+    assert.equal(field.blocked(c, c, PLAYER_RADIUS), false);
+    const o = solids[0];
+    assert.equal(field.blocked(o.x, o.y, PLAYER_RADIUS), true);
+    const pos = field.resolve({ x: o.x + 3, y: o.y + 2 }, PLAYER_RADIUS);
+    assert.ok(Math.hypot(pos.x - o.x, pos.y - o.y) >= o.r + PLAYER_RADIUS - 0.01, 'el jugador queda fuera del obstáculo');
+  }
+});
