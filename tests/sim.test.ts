@@ -166,3 +166,20 @@ test('obstáculos: lista determinista, centro libre y colisión', async () => {
     assert.ok(Math.hypot(pos.x - o.x, pos.y - o.y) >= o.r + PLAYER_RADIUS - 0.01, 'el jugador queda fuera del obstáculo');
   }
 });
+
+test('mandar muchos mensajes de movimiento no permite ir más rápido', () => {
+  const game = new Game(1, 2, [{ id: 'a', name: 'A', character: 1 }], {
+    snapshot: () => {}, fx: () => {}, announce: () => {}, toast: () => {}, offer: () => {}, end: () => {},
+  });
+  const dt = 1 / PARAMS.tickRate;
+  const p = game.players.get('a')!;
+  const start = { x: p.x, y: p.y };
+  const speed = game.speed(p);
+  // Un tramposo manda 20 mensajes por tick (800 por segundo) pidiendo ir muy lejos durante 1 segundo
+  for (let t = 0; t < PARAMS.tickRate; t++) {
+    game.tick(dt);
+    for (let i = 0; i < 20; i++) game.move('a', p.x + 5000, p.y);
+  }
+  const moved = Math.hypot(p.x - start.x, p.y - start.y);
+  assert.ok(moved <= speed * 1.35 + 60, `se movió ${Math.round(moved)} px en 1 s con velocidad ${Math.round(speed)}`);
+});

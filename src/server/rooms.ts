@@ -7,10 +7,17 @@ import { getProgress, getUser, loadPermBonus, unlockedOptions } from './accounts
 import { dbEnabled } from './db.js';
 import { Game } from './game.js';
 import { saveMatch, type Participant } from './persist.js';
+import { RateLimiter, asInt, asObject, asString } from './security.js';
+
+/** Máximo de salas abiertas a la vez en el servidor (protege la memoria y la CPU). */
+const MAX_ROOMS = Number(process.env.MAX_ROOMS ?? 100) || 100;
+/** Cada IP puede crear 5 salas por minuto y fallar 15 códigos de sala por minuto. */
+const roomCreateLimit = new RateLimiter(5, 60_000);
+const joinFailLimit = new RateLimiter(15, 60_000);
 
 /** Cuenta con la que se conectó el navegador (null = invitado). */
 export interface SocketAccount { id: number; level: number; displayName: string }
-export interface SocketData { room?: string; player?: string; account?: SocketAccount | null }
+export interface SocketData { room?: string; player?: string; account?: SocketAccount | null; ip?: string }
 
 export type IO = Server<ClientToServer, ServerToClient, Record<string, never>, SocketData>;
 type Sock = Socket<ClientToServer, ServerToClient, Record<string, never>, SocketData>;
@@ -32,7 +39,7 @@ function validCharacter(c: unknown, level: number): number {
   return CHARACTERS.some((x) => x.id === c) && characterAllowed(c as number, level) ? (c as number) : 1;
 }
 function cleanName(n: unknown): string {
-  const s = String(n ?? '').replace(/[<>]/g, '').trim().slice(0, 16);
+  const s = (typeof n === 'string' ? n.slice(0, 64) : '').replace(/[<>\u0000-\u001f\u007f]/g, '').trim().slice(0, 16);
   return s || 'Jugador';
 }
 
@@ -78,7 +85,7 @@ export class Room {
     this.broadcast();
   }
 
-  add(socket: Sock, name: string, character: number): RoomPlayer {
+  add(socket: Sock, name: unknown, character: unknown): RoomPlayer {
     const acc = socket.data.account ?? null;
     const level = acc?.level ?? 1;
     const p: RoomPlayer = {
@@ -230,79 +237,127 @@ export class RoomManager {
   }
 
   handle(socket: Sock) {
+    const ip = socket.data.ip ?? 'desconocida';
     const current = () => {
       const room = socket.data.room ? this.rooms.get(socket.data.room) : undefined;
       const player = room?.players.find((p) => p.id === socket.data.player);
       return room && player ? { room, player } : null;
     };
 
-    socket.on('createRoom', ({ name, character, mapId, difficultyId }) => {
-      if (current()) return;
-      const room = new Room(this.newCode(), this.io, (r) => this.rooms.delete(r.code));
-      if (MAPS.some((m) => m.id === mapId && m.available)) room.mapId = mapId;
-      if (DIFFICULTIES.some((d) => d.id === difficultyId)) room.difficultyId = difficultyId;
-      this.rooms.set(room.code, room);
-      room.add(socket, name, character);
+    // Límite de mensajes por conexión: el juego manda ~30 por segundo al moverse.
+    // Lo que pase de 80 por segundo se ignora; si alguien manda muchísimos, se le desconecta.
+    let windowStart = Date.now(), count = 0;
+    socket.use((_packet, next) => {
+      const now = Date.now();
+      if (now - windowStart >= 1000) { windowStart = now; count = 0; }
+      count++;
+      if (count > 400) return void socket.disconnect(true);
+      if (count <= 80) next();
     });
 
-    socket.on('joinRoom', ({ code, name, character, token }) => {
-      if (current()) return;
-      const room = this.rooms.get(String(code ?? '').toUpperCase().trim());
-      if (!room) return void socket.emit('errorMsg', 'No existe una sala con ese código.');
+    /** Registra un evento sin que un dato raro o un error tumbe el servidor entero. */
+    const on = (event: keyof ClientToServer, fn: (arg: unknown) => void | Promise<void>) => {
+      (socket as unknown as { on(e: string, f: (a: unknown) => void): void }).on(event, (arg) => {
+        try {
+          const out = fn(arg);
+          if (out) out.catch((err: unknown) => console.error(`[socket] ${event}:`, err));
+        } catch (err) {
+          console.error(`[socket] ${event}:`, err);
+        }
+      });
+    };
+
+    /** Una cuenta solo puede estar en una sala a la vez (evita ganar premios en varias partidas en paralelo). */
+    const accountBusy = () => {
+      const acc = socket.data.account;
+      if (!acc) return false;
+      for (const r of this.rooms.values()) if (r.players.some((p) => p.userId === acc.id)) return true;
+      return false;
+    };
+
+    on('createRoom', (raw) => {
+      const o = asObject(raw);
+      if (!o || current()) return;
+      if (accountBusy()) return void socket.emit('errorMsg', 'Tu cuenta ya está en otra sala.');
+      if (this.rooms.size >= MAX_ROOMS) return void socket.emit('errorMsg', 'El servidor está lleno. Inténtalo en unos minutos.');
+      if (!roomCreateLimit.take(ip)) return void socket.emit('errorMsg', 'Has creado demasiadas salas. Espera un minuto.');
+      const room = new Room(this.newCode(), this.io, (r) => this.rooms.delete(r.code));
+      const mapId = asInt(o.mapId), difficultyId = asInt(o.difficultyId);
+      if (MAPS.some((m) => m.id === mapId && m.available)) room.mapId = mapId as number;
+      if (DIFFICULTIES.some((d) => d.id === difficultyId)) room.difficultyId = difficultyId as number;
+      this.rooms.set(room.code, room);
+      room.add(socket, o.name, o.character);
+    });
+
+    on('joinRoom', (raw) => {
+      const o = asObject(raw);
+      if (!o || current()) return;
+      const code = (asString(o.code, 12) ?? '').toUpperCase().trim();
+      const token = asString(o.token, 64);
+      const room = this.rooms.get(code);
+      if (!room) {
+        // Frena a quien intenta adivinar códigos de sala probando muchos seguidos
+        if (!joinFailLimit.take(ip)) return void socket.emit('errorMsg', 'Demasiados intentos con códigos incorrectos. Espera un minuto.');
+        return void socket.emit('errorMsg', 'No existe una sala con ese código.');
+      }
       const back = token ? room.players.find((p) => p.token === token) : undefined;
       if (back) return void room.attach(back, socket);
       if (room.phase !== 'lobby') return void socket.emit('errorMsg', 'La partida de esa sala ya empezó.');
       if (room.players.length >= PARAMS.maxPlayers) return void socket.emit('errorMsg', 'La sala está llena (máximo 4 jugadores).');
-      const acc = socket.data.account;
-      if (acc && room.players.some((p) => p.userId === acc.id)) return void socket.emit('errorMsg', 'Tu cuenta ya está en esa sala.');
-      room.add(socket, name, character);
+      if (accountBusy()) return void socket.emit('errorMsg', 'Tu cuenta ya está en una sala.');
+      room.add(socket, o.name, o.character);
     });
 
-    socket.on('leaveRoom', () => {
+    on('leaveRoom', () => {
       const c = current();
       if (c) c.room.remove(c.player.id);
     });
 
-    socket.on('setCharacter', (id) => {
+    on('setCharacter', (id) => {
       const c = current();
       if (!c || c.room.phase !== 'lobby') return;
       c.player.character = validCharacter(id, c.player.accountLevel);
       c.room.broadcast();
     });
 
-    socket.on('setReady', (ready) => {
+    on('setReady', (ready) => {
       const c = current();
       if (!c || c.room.phase !== 'lobby') return;
-      c.player.ready = !!ready;
+      c.player.ready = ready === true;
       c.room.broadcast();
     });
 
-    socket.on('setOptions', ({ mapId, difficultyId }) => {
+    on('setOptions', (raw) => {
+      const o = asObject(raw);
       const c = current();
-      if (!c || c.room.phase !== 'lobby' || c.room.hostId !== c.player.id) return;
+      if (!o || !c || c.room.phase !== 'lobby' || c.room.hostId !== c.player.id) return;
+      const mapId = asInt(o.mapId), difficultyId = asInt(o.difficultyId);
       const m = mapId ?? c.room.mapId, d = difficultyId ?? c.room.difficultyId;
       if (c.room.isOptionUnlocked(m, d)) { c.room.mapId = m; c.room.difficultyId = d; }
       else if (mapId !== undefined && c.room.isOptionUnlocked(m, 2)) { c.room.mapId = m; c.room.difficultyId = 2; }
       c.room.broadcast();
     });
 
-    socket.on('startGame', () => {
+    on('startGame', async () => {
       const c = current();
       if (!c) return;
-      c.room.start(c.player.id).then((err) => { if (err) socket.emit('errorMsg', err); });
+      const err = await c.room.start(c.player.id);
+      if (err) socket.emit('errorMsg', err);
     });
 
-    socket.on('move', (p) => {
+    on('move', (raw) => {
+      const o = asObject(raw);
       const c = current();
-      if (c && c.room.phase === 'playing' && p) c.room.game?.move(c.player.id, Number(p.x), Number(p.y));
+      if (o && c && c.room.phase === 'playing') c.room.game?.move(c.player.id, Number(o.x), Number(o.y));
     });
 
-    socket.on('chooseUpgrade', (i) => {
+    on('chooseUpgrade', (i) => {
       const c = current();
-      if (c && c.room.phase === 'playing') c.room.game?.choose(c.player.id, Number(i));
+      const index = asInt(i);
+      if (c && index !== undefined && c.room.phase === 'playing') c.room.game?.choose(c.player.id, index);
     });
 
-    socket.on('backToLobby', () => {
+    on('backToLobby', () => {
       const c = current();
       if (c) c.room.backToLobby();
     });

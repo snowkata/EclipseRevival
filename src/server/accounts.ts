@@ -8,6 +8,11 @@ import type { Account, HistoryRow, LeaderboardRow, MapProgress, Profile, ShopIte
 import { dbEnabled, query, transaction } from './db.js';
 
 const SECRET = process.env.JWT_SECRET ?? randomBytes(32).toString('hex');
+if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 32) {
+  // Una clave corta se puede adivinar y con ella cualquiera fabricaría sesiones falsas
+  console.error('[cuentas] JWT_SECRET es muy corta: usa al menos 32 caracteres aleatorios.');
+  if (process.env.NODE_ENV === 'production') process.exit(1);
+}
 if (!process.env.JWT_SECRET && dbEnabled()) console.warn('[cuentas] Falta JWT_SECRET: las sesiones se cerrarán al reiniciar el servidor.');
 
 export class ApiError extends Error {
@@ -25,11 +30,11 @@ const toAccount = (u: UserRow): Account => ({
 });
 
 /** Sesión de 24 horas (RNF13). */
-export const signToken = (userId: number) => jwt.sign({ sub: String(userId) }, SECRET, { expiresIn: '24h' });
+export const signToken = (userId: number) => jwt.sign({ sub: String(userId) }, SECRET, { expiresIn: '24h', algorithm: 'HS256' });
 export function verifyToken(token: unknown): number | null {
-  if (typeof token !== 'string' || !token) return null;
+  if (typeof token !== 'string' || !token || token.length > 1000) return null;
   try {
-    const p = jwt.verify(token, SECRET) as { sub?: string };
+    const p = jwt.verify(token, SECRET, { algorithms: ['HS256'] }) as { sub?: string };
     const id = Number(p.sub);
     return Number.isInteger(id) ? id : null;
   } catch {
@@ -38,7 +43,8 @@ export function verifyToken(token: unknown): number | null {
 }
 
 export async function register(username: unknown, email: unknown, password: unknown): Promise<{ token: string; account: Account }> {
-  const u = String(username ?? '').trim(), e = String(email ?? '').trim().toLowerCase(), p = String(password ?? '');
+  if (typeof username !== 'string' || typeof email !== 'string' || typeof password !== 'string') throw new ApiError(400, 'Datos no válidos.');
+  const u = username.trim(), e = email.trim().toLowerCase(), p = password;
   if (!/^[A-Za-z0-9_]{3,30}$/.test(u)) throw new ApiError(400, 'El nombre de usuario debe tener de 3 a 30 letras, números o guion bajo.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || e.length > 100) throw new ApiError(400, 'El correo no es válido.');
   if (p.length < 8 || p.length > 72) throw new ApiError(400, 'La contraseña debe tener entre 8 y 72 caracteres.');
@@ -51,7 +57,8 @@ export async function register(username: unknown, email: unknown, password: unkn
 }
 
 export async function login(identifier: unknown, password: unknown): Promise<{ token: string; account: Account }> {
-  const id = String(identifier ?? '').trim(), p = String(password ?? '');
+  if (typeof identifier !== 'string' || typeof password !== 'string' || identifier.length > 100 || password.length > 72) throw new ApiError(401, 'Usuario o contraseña incorrectos.');
+  const id = identifier.trim(), p = password;
   const rows = await query<UserRow>('SELECT * FROM usuario WHERE lower(nombre_usuario) = lower($1) OR correo = lower($1)', [id]);
   const user = rows[0];
   // Se compara siempre contra un hash para no revelar si la cuenta existe
@@ -102,10 +109,10 @@ export function unlockedOptions(progress: MapProgress[] | null): [number, number
 }
 
 export async function updateProfile(userId: number, displayName: unknown, color: unknown): Promise<Account> {
-  const name = String(displayName ?? '').replace(/[<>]/g, '').trim().slice(0, 16);
+  const name = (typeof displayName === 'string' ? displayName.slice(0, 64) : '').replace(/[<>\u0000-\u001f\u007f]/g, '').trim().slice(0, 16);
   if (name.length < 2) throw new ApiError(400, 'El nombre visible debe tener al menos 2 caracteres.');
   const col = typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color) ? color : null;
-  const rows = await query<UserRow>('UPDATE usuario SET nombre_visible = $2, color_avatar = $3 WHERE id_usuario = $1 RETURNING *', [userId, name, col]);
+  const rows = await query<UserRow>("UPDATE usuario SET nombre_visible = $2, color_avatar = $3 WHERE id_usuario = $1 AND estado = 'activo' RETURNING *", [userId, name, col]);
   if (!rows[0]) throw new ApiError(401, 'Sesión no válida.');
   return toAccount(rows[0]);
 }
@@ -115,7 +122,7 @@ export async function buyUpgrade(userId: number, upgradeId: unknown): Promise<vo
   const id = Number(upgradeId);
   if (!Number.isInteger(id)) throw new ApiError(400, 'Mejora no válida.');
   await transaction(async (c) => {
-    const user = (await c.query<UserRow>('SELECT * FROM usuario WHERE id_usuario = $1 FOR UPDATE', [userId])).rows[0];
+    const user = (await c.query<UserRow>("SELECT * FROM usuario WHERE id_usuario = $1 AND estado = 'activo' FOR UPDATE", [userId])).rows[0];
     const up = (await c.query('SELECT * FROM mejora_permanente WHERE id_mejora = $1', [id])).rows[0];
     if (!user || !up) throw new ApiError(404, 'Mejora no encontrada.');
     if (user.nivel_cuenta < up.nivel_cuenta_req) throw new ApiError(403, `Necesitas nivel de cuenta ${up.nivel_cuenta_req}.`);
