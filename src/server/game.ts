@@ -4,15 +4,16 @@ import {
   COMBOS, EVENTS, ITEMS, LOOT, PARAMS, PASSIVES, RESISTANCES, WEAPONS,
   characterById, difficultyById, enemyById, mapById, passiveById, weaponById,
   type CharacterDef, type DifficultyDef, type ElementId, type EnemyDef, type EventId,
-  type ItemKind, type MapDef, type PassiveAttr, type WeaponDef,
+  type ItemKind, type MapDef, type PassiveAttr, type PermBonus, type WeaponDef,
 } from '../shared/data.js';
 import { enemiesPerWave, enemyHp, orbitAngle, orbitCount, weaponLevelMult, xpToNext } from '../shared/formulas.js';
 import type { Announcement, FxEvent, GameOver, PlayerSnap, Snapshot, UpgradeOption } from '../shared/protocol.js';
+import { ObstacleField, PLAYER_RADIUS } from '../shared/world.js';
 import { SpatialGrid } from './grid.js';
 
 const W = PARAMS.worldSize;
-const PLAYER_R = 16;
-const ITEM_TYPES: ItemKind[] = ['oro', 'curar', 'iman', 'bomba', 'cofre'];
+const PLAYER_R = PLAYER_RADIUS;
+const ITEM_TYPES: ItemKind[] = ['oro', 'curar', 'iman', 'bomba', 'cofre', 'cofre_maldito'];
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const pick = <T>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
@@ -29,7 +30,10 @@ export interface SimPlayer {
   pending: number; offer: UpgradeOption[] | null;
   hurtCd: number; lastMoveAt: number;
   kills: number; damageDealt: number; damageTaken: number; revives: number;
-  weaponDamage: Map<number, number>;
+  weaponDamage: Map<number, number>; weaponKills: Map<number, number>;
+  /** Mejoras permanentes del taller y armas desbloqueadas por nivel de cuenta (RF39, RF40) */
+  perm: PermBonus; allowedWeapons: Set<number> | null; extraLives: number;
+  choices: { round: number; weapon: number | null; passive: number | null; level: number }[];
 }
 
 interface Enemy {
@@ -38,6 +42,8 @@ interface Enemy {
   last: { el: ElementId; pid: string; t: number } | null;
   atkCd: number; summonCd: number; dashT: number; windT: number; dx: number; dy: number;
   final: boolean; lastHitBy: string | null;
+  /** Élite de un evento y, si es el cazador, el jugador al que persigue */
+  elite: boolean; hunt: string | null;
 }
 
 interface Projectile {
@@ -62,7 +68,10 @@ export interface GameCallbacks {
   end(r: GameOver): void;
 }
 
-export interface StartPlayer { id: string; name: string; character: number }
+export interface StartPlayer { id: string; name: string; character: number; perm?: PermBonus; allowedWeapons?: number[] | null }
+
+/** Resumen de cada ronda para guardarla en la base de datos (tabla ronda). */
+export interface RoundLog { number: number; type: 'normal' | 'jefe' | 'evento' | 'jefe_final'; event: EventId | null; kills: number; done: boolean | null }
 
 export class Game {
   map: MapDef; diff: DifficultyDef;
@@ -72,6 +81,8 @@ export class Game {
   pickups: Pickup[] = [];
   zones: Zone[] = [];
   grid = new SpatialGrid<Enemy>(80);
+  /** Árboles, rocas y ruinas del mapa: bloquean a jugadores, enemigos y disparos */
+  field!: ObstacleField;
   private scratch: Enemy[] = [];
   private nextId = 1;
   time = 0;
@@ -81,8 +92,15 @@ export class Game {
   gold = 0;
   kills = 0;
   event: EventId | null = null;
-  nextEventRound = 3;
+  // Para probar eventos en desarrollo: ER_FIRST_EVENT_ROUND=1 ER_FORCE_EVENT=escolta
+  nextEventRound = Number(process.env.ER_FIRST_EVENT_ROUND) || 3;
   meteorCd = 0;
+  // Eventos con objetivo (RF29–RF31)
+  eventGoal: boolean | null = null;
+  private eventElites = new Set<number>();
+  private cursedOpened = false;
+  hunted: string | null = null;
+  escort: { x: number; y: number; hp: number; maxHp: number; zx: number; zy: number } | null = null;
   bossId: number | null = null;
   finished = false;
   private tickCount = 0;
@@ -91,6 +109,7 @@ export class Game {
 
   constructor(mapId: number, difficultyId: number, players: StartPlayer[], private cb: GameCallbacks) {
     this.map = mapById(mapId);
+    this.field = new ObstacleField(this.map.id);
     this.diff = difficultyById(difficultyId);
     players.forEach((p, i) => {
       const char = characterById(p.character);
@@ -100,7 +119,9 @@ export class Game {
         x: W / 2 + Math.cos(a) * 60, y: W / 2 + Math.sin(a) * 60,
         hp: char.hp, level: 1, xp: 0, down: false, revive: 0, connected: true, disconnectedAt: 0,
         weapons: [], passives: new Map(), pending: 0, offer: null, hurtCd: 0, lastMoveAt: 0,
-        kills: 0, damageDealt: 0, damageTaken: 0, revives: 0, weaponDamage: new Map(),
+        kills: 0, damageDealt: 0, damageTaken: 0, revives: 0, weaponDamage: new Map(), weaponKills: new Map(),
+        perm: p.perm ?? {}, allowedWeapons: p.allowedWeapons ? new Set(p.allowedWeapons) : null,
+        extraLives: Math.round(p.perm?.revivir ?? 0), choices: [],
       };
       this.addWeapon(sp, char.startWeapon);
       this.players.set(p.id, sp);
@@ -120,16 +141,16 @@ export class Game {
     }
     return v;
   }
-  maxHp(p: SimPlayer) { return Math.round(p.char.hp * (1 + this.passive(p, 'vida') / 100)); }
-  speed(p: SimPlayer) { return p.char.speed * (1 + this.passive(p, 'velocidad') / 100 + (p.char.bonus.velocidad ?? 0)); }
+  maxHp(p: SimPlayer) { return Math.round(p.char.hp * (1 + (this.passive(p, 'vida') + (p.perm.vida ?? 0)) / 100)); }
+  speed(p: SimPlayer) { return p.char.speed * (1 + (this.passive(p, 'velocidad') + (p.perm.velocidad ?? 0)) / 100 + (p.char.bonus.velocidad ?? 0)); }
   area(p: SimPlayer) { return 1 + this.passive(p, 'area') / 100 + (p.char.bonus.area ?? 0); }
   private rateMult(p: SimPlayer) { return 1 + this.passive(p, 'cadencia') / 100 + (p.char.bonus.cadencia ?? 0); }
   private dmgMult(p: SimPlayer, w: OwnedWeapon) {
-    let m = (1 + this.passive(p, 'dano') / 100 + (p.char.bonus.dano ?? 0)) * weaponLevelMult(w.def.perLevel, w.level);
+    let m = (1 + (this.passive(p, 'dano') + (p.perm.dano ?? 0)) / 100 + (p.char.bonus.dano ?? 0)) * weaponLevelMult(w.def.perLevel, w.level);
     if (w.def.element === 2 && p.char.bonus.fuego) m *= 1 + p.char.bonus.fuego;
     return m;
   }
-  private pickupRadius(p: SimPlayer) { return 50 * (1 + this.passive(p, 'iman') / 100); }
+  private pickupRadius(p: SimPlayer) { return 50 * (1 + (this.passive(p, 'iman') + (p.perm.iman ?? 0)) / 100); }
 
   private addWeapon(p: SimPlayer, id: number) {
     p.weapons.push({ def: weaponById(id), level: 1, cd: 0.5, hitCd: new Map() });
@@ -148,6 +169,7 @@ export class Game {
     const k = d > max ? max / d : 1;
     p.x = clamp(p.x + dx * k, PLAYER_R, W - PLAYER_R);
     p.y = clamp(p.y + dy * k, PLAYER_R, W - PLAYER_R);
+    this.field.resolve(p, PLAYER_R);
   }
 
   choose(id: string, index: number) {
@@ -157,6 +179,8 @@ export class Game {
     if (!opt) return;
     p.offer = null;
     p.pending = Math.max(0, p.pending - 1);
+    if (opt.kind === 'weapon' || opt.kind === 'passive')
+      p.choices.push({ round: this.round, weapon: opt.kind === 'weapon' ? opt.id : null, passive: opt.kind === 'passive' ? opt.id : null, level: p.level });
     if (opt.kind === 'weapon') {
       const w = p.weapons.find((x) => x.def.id === opt.id);
       if (w) w.level = Math.min(w.def.maxLevel, w.level + 1);
@@ -195,6 +219,7 @@ export class Game {
     if (p.weapons.length < PARAMS.maxWeapons) {
       for (const d of WEAPONS) {
         if (d.isEvolution || p.weapons.some((w) => w.def.id === d.id || w.def.id === d.evolution)) continue;
+        if (p.allowedWeapons && !p.allowedWeapons.has(d.id)) continue;
         pool.push({ kind: 'weapon', id: d.id, level: 1, name: d.name, desc: d.desc, isNew: true });
       }
     }
@@ -236,21 +261,39 @@ export class Game {
   }
 
   // ---------- Rondas, jefes y eventos (RF16–RF20, RF26–RF32) ----------
+  rounds: RoundLog[] = [];
+  private roundKillsStart = 0;
+
+  private closeRoundLog(done: boolean) {
+    const last = this.rounds[this.rounds.length - 1];
+    if (!last) return;
+    last.kills = this.kills - this.roundKillsStart;
+    if (last.type === 'evento') last.done = done;
+    this.roundKillsStart = this.kills;
+  }
+
   private startRound(n: number) {
     // Recompensa del evento que termina (RF32)
-    if (this.event && this.anyoneAlive()) {
+    const eventOk = this.anyoneAlive() && this.eventGoal !== false;
+    if (this.event && !eventOk && this.anyoneAlive()) this.cb.toast('Evento fallido: no se cumplió el objetivo');
+    if (this.event && eventOk) {
       const def = EVENTS.find((e) => e.id === this.event)!;
       const g = Math.round(def.gold * this.diff.mReward);
       this.gold += g;
       for (const p of this.players.values()) if (p.connected) { p.pending++; this.offerNext(p); }
       this.cb.toast(`Evento superado: +${g} de oro y una mejora extra`);
     }
+    this.closeRoundLog(eventOk);
+    this.endEvent();
     this.event = null;
     this.round = n;
     this.roundLeft = PARAMS.roundSeconds;
     this.waveCd = 1;
+    const log: RoundLog = { number: n, type: 'normal', event: null, kills: 0, done: null };
+    this.rounds.push(log);
     const isFinal = n >= this.totalRounds;
     if (isFinal) {
+      log.type = 'jefe_final';
       const rule = this.map.spawns.find((s) => s.role === 'jefe_final');
       this.cb.announce({ title: `Ronda final`, subtitle: 'Derroten al jefe final para salvar el eclipse', tone: 'danger' });
       if (rule) this.spawnBoss(rule.enemy, true);
@@ -259,19 +302,115 @@ export class Game {
     if (n % PARAMS.bossEvery === 0) {
       const rule = this.map.spawns.find((s) => s.role === 'jefe' && s.from <= n);
       if (rule) {
+        log.type = 'jefe';
         this.spawnBoss(rule.enemy, false);
         this.cb.announce({ title: `Ronda ${n}`, subtitle: `¡Aparece ${enemyById(rule.enemy).name}!`, tone: 'boss' });
         return;
       }
     }
     if (n >= this.nextEventRound) {
-      const ev = pick([...EVENTS]);
+      const ev = EVENTS.find((e) => e.id === process.env.ER_FORCE_EVENT) ?? pick([...EVENTS]);
       this.event = ev.id;
+      log.type = 'evento';
+      log.event = ev.id;
       this.nextEventRound = n + Math.round(rand(PARAMS.eventMin, PARAMS.eventMax));
       this.cb.announce({ title: ev.name, subtitle: ev.goal, tone: 'event' });
+      this.beginEvent(ev.id);
       return;
     }
     this.cb.announce({ title: `Ronda ${n}`, subtitle: `de ${this.totalRounds}`, tone: 'round' });
+  }
+
+  // ---------- Eventos con objetivo ----------
+  /** Tipo de enemigo más fuerte de la ronda actual, para los élites de los eventos. */
+  private eliteDef(): EnemyDef {
+    const rules = this.map.spawns.filter((s) => s.role === 'normal' && s.from <= this.round && (s.to == null || this.round <= s.to));
+    const best = rules.sort((a, b) => enemyById(b.enemy).hp - enemyById(a.enemy).hp)[0];
+    return enemyById(best?.enemy ?? 1);
+  }
+
+  private spawnElite(x: number, y: number): Enemy {
+    const e = this.spawnEnemy(this.eliteDef(), clamp(x, 20, W - 20), clamp(y, 20, W - 20), false, true);
+    this.eventElites.add(e.id);
+    return e;
+  }
+
+  private beginEvent(id: EventId) {
+    const alive = [...this.players.values()].filter((p) => p.connected && !p.down);
+    const anchor = alive.length ? pick(alive) : null;
+    if (id === 'eclipse' || id === 'meteoros' || !anchor) return; // solo hay que sobrevivir
+    this.eventGoal = false;
+    const a = Math.random() * Math.PI * 2;
+    if (id === 'cazador') {
+      // RF29: un élite persigue a un jugador elegido al azar
+      this.hunted = anchor.id;
+      const e = this.spawnElite(anchor.x + Math.cos(a) * 700, anchor.y + Math.sin(a) * 700);
+      e.hunt = anchor.id;
+      this.cb.toast(`El cazador va por ${anchor.name}. ¡Protéjanlo!`);
+    } else if (id === 'cofre') {
+      // RF30: el cofre libera una horda de élites al abrirse
+      this.dropItem('cofre_maldito', clamp(anchor.x + Math.cos(a) * 320, 60, W - 60), clamp(anchor.y + Math.sin(a) * 320, 60, W - 60));
+    } else if (id === 'escolta') {
+      // RF31: el superviviente camina hacia la zona de rescate mientras haya un jugador cerca
+      const hp = Math.round(150 * (1 + 0.1 * this.round));
+      let zx = anchor.x + Math.cos(a) * 1000, zy = anchor.y + Math.sin(a) * 1000;
+      if (zx < 150 || zx > W - 150) zx = anchor.x - Math.cos(a) * 1000;
+      if (zy < 150 || zy > W - 150) zy = anchor.y - Math.sin(a) * 1000;
+      this.escort = { x: anchor.x + 50, y: anchor.y, hp, maxHp: hp, zx: Math.round(clamp(zx, 150, W - 150)), zy: Math.round(clamp(zy, 150, W - 150)) };
+      const zone = this.field.resolve({ x: this.escort.zx, y: this.escort.zy }, 40);
+      this.escort.zx = Math.round(zone.x); this.escort.zy = Math.round(zone.y);
+      this.field.resolve(this.escort, 14);
+    }
+  }
+
+  private completeEvent() {
+    this.eventGoal = true;
+    this.hunted = null;
+    this.escort = null;
+    this.cb.announce({ title: '¡Objetivo cumplido!', subtitle: 'Recibirán la recompensa al terminar la ronda', tone: 'info' });
+  }
+
+  /** Limpia lo que quedó del evento al cambiar de ronda. Los élites que sigan vivos se quedan como enemigos normales. */
+  private endEvent() {
+    this.eventGoal = null;
+    this.eventElites.clear();
+    this.cursedOpened = false;
+    this.hunted = null;
+    this.escort = null;
+    this.pickups = this.pickups.filter((g) => g.type !== 10 + ITEM_TYPES.indexOf('cofre_maldito'));
+    for (const e of this.enemies.values()) e.hunt = null;
+  }
+
+  private openCursedChest(p: SimPlayer) {
+    if (this.event !== 'cofre' || this.cursedOpened) return;
+    this.cursedOpened = true;
+    const n = 3 + this.activeCount;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      this.spawnElite(p.x + Math.cos(a) * 320, p.y + Math.sin(a) * 320);
+    }
+    this.fxQueue.push({ k: 'boom', x: p.x, y: p.y, r: 320, color: 0x8f6bff });
+    this.cb.announce({ title: '¡El cofre estaba maldito!', subtitle: `Derroten a los ${n} élites`, tone: 'danger' });
+  }
+
+  private updateEscort(dt: number) {
+    const s = this.escort;
+    if (!s || this.event !== 'escolta' || this.eventGoal !== false) return;
+    const guarded = [...this.players.values()].some((p) => p.connected && !p.down && dist2(p.x, p.y, s.x, s.y) < 220 * 220);
+    const dx = s.zx - s.x, dy = s.zy - s.y, d = Math.hypot(dx, dy) || 1;
+    if (d < 70) return void this.completeEvent();
+    if (guarded) { s.x += (dx / d) * 85 * dt; s.y += (dy / d) * 85 * dt; this.field.resolve(s, 14); }
+    // Los enemigos que lo tocan le hacen daño
+    let hits = 0;
+    for (const e of this.grid.query(s.x, s.y, 60, this.scratch)) {
+      if (hits >= 3) break;
+      if (dist2(e.x, e.y, s.x, s.y) < (e.def.radius + 18) ** 2) { s.hp -= e.dmg * dt; hits++; }
+    }
+    if (s.hp <= 0) {
+      this.escort = null;
+      this.fxQueue.push({ k: 'death', x: s.x, y: s.y, color: 0x6ee7a8, big: false });
+      this.cb.toast('El superviviente cayó. Evento fallido.');
+    }
   }
 
   private anyoneAlive() {
@@ -286,14 +425,15 @@ export class Game {
     return { x: clamp(anchor.x + Math.cos(a) * d, 20, W - 20), y: clamp(anchor.y + Math.sin(a) * d, 20, W - 20) };
   }
 
-  private spawnEnemy(def: EnemyDef, x: number, y: number, final = false): Enemy {
+  private spawnEnemy(def: EnemyDef, x: number, y: number, final = false, elite = false): Enemy {
     const players = this.activeCount;
-    const maxHp = enemyHp(def.hp, this.round, players, this.diff);
+    const maxHp = enemyHp(def.hp, this.round, players, this.diff) * (elite ? 8 : 1);
     const e: Enemy = {
-      id: this.nextId++, def, x, y, hp: maxHp, maxHp, dmg: def.damage * this.diff.mDmg * (1 + 0.04 * this.round),
+      id: this.nextId++, def, x, y, hp: maxHp, maxHp, dmg: def.damage * this.diff.mDmg * (1 + 0.04 * this.round) * (elite ? 1.5 : 1),
       slowT: 0, burnT: 0, burnDps: 0, poisonT: 0, poisonDps: 0, stunT: 0, last: null,
-      atkCd: rand(1, 2.5), summonCd: rand(3, 6), dashT: 0, windT: 0, dx: 0, dy: 0, final, lastHitBy: null,
+      atkCd: rand(1, 2.5), summonCd: rand(3, 6), dashT: 0, windT: 0, dx: 0, dy: 0, final, lastHitBy: null, elite, hunt: null,
     };
+    if (!def.boss) this.field.resolve(e, def.radius);
     this.enemies.set(e.id, e);
     return e;
   }
@@ -363,18 +503,23 @@ export class Game {
         e.last = { el, pid: owner, t: this.time };
       }
     }
-    if (e.hp <= 0) this.killEnemy(e, owner);
+    if (e.hp <= 0) this.killEnemy(e, owner, weapon);
   }
 
-  private killEnemy(e: Enemy, killer: string | null) {
+  private killEnemy(e: Enemy, killer: string | null, weapon = 0) {
     if (!this.enemies.delete(e.id)) return;
     this.kills++;
     const k = killer ?? e.lastHitBy;
-    if (k) { const p = this.players.get(k); if (p) p.kills++; }
+    const kp = k ? this.players.get(k) : undefined;
+    if (kp) { kp.kills++; if (weapon > 0) kp.weaponKills.set(weapon, (kp.weaponKills.get(weapon) ?? 0) + 1); }
+    const luck = 1 + (kp?.perm.suerte ?? 0) / 100; // la mejora Suerte aumenta el botín
     this.fxQueue.push({ k: 'death', x: e.x, y: e.y, color: e.def.color, big: e.def.boss });
-    this.dropGem(e.x, e.y, e.def.xp);
+    this.dropGem(e.x, e.y, e.def.xp * (e.elite ? 10 : 1));
+    if (e.elite) this.dropItem('oro', e.x, e.y);
+    if (this.eventElites.delete(e.id) && this.eventElites.size === 0 && this.eventGoal === false
+      && (this.event === 'cazador' || (this.event === 'cofre' && this.cursedOpened))) this.completeEvent();
     for (const [item, prob] of LOOT[e.def.id] ?? []) {
-      if (Math.random() < prob) this.dropItem(item, e.x + rand(-20, 20), e.y + rand(-20, 20));
+      if (Math.random() < prob * luck) this.dropItem(item, e.x + rand(-20, 20), e.y + rand(-20, 20));
     }
     if (e.id === this.bossId) this.bossId = null;
     if (e.final) this.finish(true);
@@ -386,20 +531,30 @@ export class Game {
       const near = this.pickups.find((g) => g.type < 10 && dist2(g.x, g.y, x, y) < 100 * 100);
       if (near) { near.value += xp; near.type = near.value >= 5 ? 2 : near.value >= 2 ? 1 : 0; return; }
     }
-    this.pickups.push({ id: this.nextId++, type: xp >= 5 ? 2 : xp >= 2 ? 1 : 0, x, y, value: xp, pull: null });
+    const at = this.field.resolve({ x, y }, 12);
+    this.pickups.push({ id: this.nextId++, type: xp >= 5 ? 2 : xp >= 2 ? 1 : 0, x: at.x, y: at.y, value: xp, pull: null });
   }
 
   private dropItem(item: ItemKind, x: number, y: number) {
-    this.pickups.push({ id: this.nextId++, type: 10 + ITEM_TYPES.indexOf(item), x, y, value: ITEMS[item].value, pull: null });
+    const at = this.field.resolve({ x, y }, 16);
+    this.pickups.push({ id: this.nextId++, type: 10 + ITEM_TYPES.indexOf(item), x: at.x, y: at.y, value: ITEMS[item].value, pull: null });
   }
 
   private hurtPlayer(p: SimPlayer, dmg: number, ignoreCd = false) {
     if (p.down || !p.connected) return;
     if (!ignoreCd && p.hurtCd > 0) return;
     p.hurtCd = 0.35;
-    const d = Math.round(dmg);
+    const d = Math.max(1, Math.round(dmg - (p.perm.armadura ?? 0)));
     p.hp -= d;
     p.damageTaken += d;
+    if (p.hp <= 0 && p.extraLives > 0) {
+      // Mejora permanente "Revivir extra": se levanta solo una vez por partida
+      p.extraLives--;
+      p.hp = Math.round(this.maxHp(p) * 0.5);
+      p.hurtCd = 1.5;
+      this.fxQueue.push({ k: 'revive', id: p.id });
+      return;
+    }
     if (p.hp <= 0) {
       p.hp = 0;
       p.down = true;
@@ -522,6 +677,7 @@ export class Game {
       this.waveCd = PARAMS.waveInterval;
       this.spawnWave();
     }
+    this.updateEscort(dt);
     if (this.event === 'meteoros') {
       this.meteorCd -= dt;
       if (this.meteorCd <= 0) {
@@ -582,6 +738,7 @@ export class Game {
       pr.y += pr.vy * dt;
       pr.life -= dt;
       if (pr.life <= 0 || pr.x < 0 || pr.y < 0 || pr.x > W || pr.y > W) continue;
+      if (this.field.blocked(pr.x, pr.y, 3)) continue; // los obstáculos detienen los disparos
       let alive = true;
       if (pr.owner === null) {
         for (const p of this.players.values()) {
@@ -644,7 +801,8 @@ export class Game {
       e.slowT -= dt;
       if (e.stunT > 0) { e.stunT -= dt; continue; }
 
-      const target = this.targetPlayer(e.x, e.y);
+      const prey = e.hunt ? this.players.get(e.hunt) : undefined;
+      const target = prey && !prey.down && prey.connected ? prey : this.targetPlayer(e.x, e.y);
       if (!target) continue;
       const dx = target.x - e.x, dy = target.y - e.y;
       const d = Math.hypot(dx, dy) || 1;
@@ -704,6 +862,7 @@ export class Game {
       }
       e.x = clamp(e.x + mx * speed * dt + px * 0.3, 0, W);
       e.y = clamp(e.y + my * speed * dt + py * 0.3, 0, W);
+      if (!e.def.boss) this.field.resolve(e, e.def.radius * 0.8); // los jefes aplastan lo que encuentran
 
       // Daño por contacto
       if (d < e.def.radius + PLAYER_R + 2) this.hurtPlayer(target, e.dmg);
@@ -755,6 +914,7 @@ export class Game {
           if (dist2(p.x, p.y, e.x, e.y) < 450 * 450) this.damageEnemy(e, e.def.boss ? 200 : value, 1, p.id, 0, 0, false);
         break;
       case 'cofre': this.openChest(p); break;
+      case 'cofre_maldito': this.openCursedChest(p); break;
     }
   }
 
@@ -782,6 +942,7 @@ export class Game {
   private finish(victory: boolean) {
     if (this.finished) return;
     this.finished = true;
+    this.closeRoundLog(victory);
     this.flush();
     this.cb.end({
       victory, round: this.round, totalRounds: this.totalRounds, seconds: Math.round(this.time), gold: this.gold,
@@ -801,12 +962,12 @@ export class Game {
       hp: Math.ceil(p.hp), maxHp: this.maxHp(p), level: p.level, xp: Math.floor(p.xp), xpNext: xpToNext(p.level),
       down: p.down, revive: Math.round(p.revive * 100) / 100, connected: p.connected,
       weapons: p.weapons.map((w) => [w.def.id, w.level]), passives: [...p.passives.entries()],
-      area: Math.round(this.area(p) * 100) / 100, pendingLevelUps: p.pending,
+      area: Math.round(this.area(p) * 100) / 100, speed: Math.round(this.speed(p)), pendingLevelUps: p.pending,
     }));
     const enemies: number[] = [];
     for (const e of this.enemies.values())
       enemies.push(e.id, e.def.id, Math.round(e.x), Math.round(e.y), Math.max(0, Math.ceil((e.hp / e.maxHp) * 100)),
-        (e.slowT > 0 ? 1 : 0) | (e.burnT > 0 ? 2 : 0) | (e.poisonT > 0 ? 4 : 0));
+        (e.slowT > 0 ? 1 : 0) | (e.burnT > 0 ? 2 : 0) | (e.poisonT > 0 ? 4 : 0) | (e.elite ? 8 : 0));
     const projectiles: number[] = [];
     for (const p of this.projectiles) projectiles.push(p.id, p.type, Math.round(p.x), Math.round(p.y));
     const pickups: number[] = [];
@@ -817,6 +978,8 @@ export class Game {
       t: Math.round(this.time * 1000) / 1000, round: this.round, totalRounds: this.totalRounds,
       roundLeft: this.round >= this.totalRounds ? -1 : Math.max(0, Math.ceil(this.roundLeft)),
       event: this.event, gold: this.gold, kills: this.kills, players, enemies, projectiles, pickups, zones, bossId: this.bossId,
+      eventGoal: this.event ? this.eventGoal : null, hunted: this.hunted,
+      escort: this.escort ? [Math.round(this.escort.x), Math.round(this.escort.y), Math.ceil((this.escort.hp / this.escort.maxHp) * 100), this.escort.zx, this.escort.zy] : null,
     });
     if (this.fxQueue.length) { this.cb.fx(this.fxQueue); this.fxQueue = []; }
   }

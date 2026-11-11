@@ -1,9 +1,12 @@
 import Phaser from 'phaser';
-import { CHARACTERS, DIFFICULTIES, MAPS, characterById, difficultyById, mapById, passiveById, weaponById } from '../../shared/data.js';
+import { CHARACTERS, CHARACTER_LEVEL_REQ, DIFFICULTIES, MAPS, characterById, difficultyById, mapById, passiveById, weaponById } from '../../shared/data.js';
 import type { Announcement, GameOver, Snapshot, UpgradeOption } from '../../shared/protocol.js';
+import { accountLevel, initAccount, refreshProfile, session } from './account.js';
 import { loadSession, saveSession, socket } from './net.js';
 import { GameScene, bossHp, bossName } from './scenes/GameScene.js';
 import { state } from './state.js';
+import { isMuted, setMuted, sfx, unlockAudio } from './sfx.js';
+import { makeTextures } from './textures.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -13,13 +16,34 @@ const show = (id: string, on: boolean) => $(id).classList.toggle('hidden', !on);
 const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
-  backgroundColor: '#07060d',
+  backgroundColor: '#05050d',
   scale: { mode: Phaser.Scale.RESIZE, width: window.innerWidth, height: window.innerHeight },
   input: { gamepad: true },
   render: { antialias: true },
   scene: [],
 });
 game.scene.add('game', GameScene, false);
+// Los dibujos se generan al arrancar para poder usarlos también como retratos en el menú
+const portraits = new Map<number, string>();
+game.scene.add('boot', {
+  create(this: Phaser.Scene) {
+    makeTextures(this);
+    for (const c of CHARACTERS) portraits.set(c.id, this.textures.getBase64(`player-${c.id}`));
+    renderChars('menu-chars');
+    if (state.lobby) renderChars('lobby-chars');
+    this.scene.stop();
+  },
+}, true);
+
+// ---------- Sonido ----------
+const muteBtn = $('btn-mute');
+const paintMute = () => { muteBtn.textContent = isMuted() ? '🔇' : '🔊'; muteBtn.classList.toggle('off', isMuted()); };
+const toggleMute = () => { setMuted(!isMuted()); paintMute(); sfx('click'); };
+muteBtn.onclick = toggleMute;
+paintMute();
+window.addEventListener('pointerdown', unlockAudio);
+window.addEventListener('keydown', unlockAudio);
+document.addEventListener('click', (ev) => { if ((ev.target as HTMLElement).closest('button, .char, select')) sfx('click'); });
 
 // ---------- Menú ----------
 let myChar = Number(localStorage.getItem('er:char') ?? 1) || 1;
@@ -35,16 +59,21 @@ fillSelects($('in-map'), $('in-diff'));
 fillSelects($('lb-map'), $('lb-diff'));
 
 function renderChars(containerId: string) {
+  if (charLocked(myChar)) myChar = 1;
   $(containerId).innerHTML = CHARACTERS.map((c) => `
-    <div class="char ${c.id === myChar ? 'sel' : ''}" data-id="${c.id}">
-      <span class="dot" style="background:#${c.color.toString(16).padStart(6, '0')}"></span><b>${c.name}</b>
-      <small>❤ ${c.hp} · 👟 ${c.speed}<br>${c.ability}<br>Arma: ${weaponById(c.startWeapon).name}</small>
+    <div class="char ${c.id === myChar ? 'sel' : ''} ${charLocked(c.id) ? 'locked' : ''}" data-id="${c.id}">
+      <span class="portrait" style="--c:#${c.color.toString(16).padStart(6, '0')}">${portraits.has(c.id) ? `<img src="${portraits.get(c.id)}" alt="">` : '<i></i>'}</span>
+      <b>${c.name}</b><span class="stats-line">❤ ${c.hp} · 👟 ${c.speed}</span>
+      ${charLocked(c.id) ? `<span class="lock">🔒 Nivel de cuenta ${CHARACTER_LEVEL_REQ[c.id]}</span>` : ''}
+      <small>${c.ability}<br>Arma: ${weaponById(c.startWeapon).name}</small>
     </div>`).join('');
 }
+/** RF40: los personajes se desbloquean con el nivel de cuenta (solo si el servidor tiene cuentas). */
+const charLocked = (id: number) => session.enabled && (CHARACTER_LEVEL_REQ[id] ?? 1) > accountLevel();
 for (const id of ['menu-chars', 'lobby-chars']) {
   $(id).addEventListener('click', (ev) => {
     const el = (ev.target as HTMLElement).closest<HTMLElement>('.char');
-    if (!el) return;
+    if (!el || el.classList.contains('locked')) return;
     myChar = Number(el.dataset.id);
     localStorage.setItem('er:char', String(myChar));
     renderChars('menu-chars');
@@ -55,6 +84,7 @@ for (const id of ['menu-chars', 'lobby-chars']) {
 renderChars('menu-chars');
 
 const myName = () => {
+  if (session.profile) return session.profile.account.displayName;
   const n = nameInput.value.trim() || 'Jugador';
   localStorage.setItem('er:name', n);
   return n;
@@ -116,10 +146,24 @@ function renderLobby() {
   $('lobby-players').innerHTML = l.players.map((p) => {
     const c = characterById(p.character);
     const tag = p.host ? 'Anfitrión' : p.ready ? '<span class="ready">Listo</span>' : 'Esperando…';
+    const acc = p.guest ? (session.enabled ? ' · invitado' : '') : ` · Nv ${p.accountLevel}`;
     return `<li><span class="dot" style="display:inline-block;width:14px;height:14px;border-radius:50%;background:#${c.color.toString(16).padStart(6, '0')}"></span>
-      <b>${esc(p.name)}</b> <small>${c.name}</small>${p.connected ? '' : ' <small>(desconectado)</small>'}<span class="tag">${tag}</span></li>`;
+      <b>${esc(p.name)}</b> <small>${c.name}${acc}</small>${p.connected ? '' : ' <small>(desconectado)</small>'}<span class="tag">${tag}</span></li>`;
   }).join('');
   const mapSel = $<HTMLSelectElement>('lb-map'), diffSel = $<HTMLSelectElement>('lb-diff');
+  // RF38: solo se pueden elegir los mapas y dificultades que el anfitrión tiene desbloqueados
+  for (const o of mapSel.options) {
+    const m = MAPS.find((x) => x.id === Number(o.value))!;
+    const open = l.unlocked.some(([id]) => id === m.id);
+    o.disabled = !open;
+    o.textContent = m.name + (!m.available ? ' (próximamente)' : open ? '' : ' 🔒');
+  }
+  for (const o of diffSel.options) {
+    const d = DIFFICULTIES.find((x) => x.id === Number(o.value))!;
+    const open = l.unlocked.some(([m, id]) => m === l.mapId && id === d.id);
+    o.disabled = !open;
+    o.textContent = `${d.name} · ${d.rounds} rondas${open ? '' : ' 🔒'}`;
+  }
   mapSel.value = String(l.mapId); diffSel.value = String(l.difficultyId);
   mapSel.disabled = diffSel.disabled = !isHost;
   const d = difficultyById(l.difficultyId);
@@ -196,7 +240,8 @@ function renderHud(s: Snapshot) {
   $('hud-timer').textContent = s.roundLeft < 0 ? '∞' : String(s.roundLeft);
   $('hud-gold').textContent = String(s.gold);
   $('hud-kills').textContent = String(s.kills);
-  const ev = s.event === 'eclipse' ? '🌑 Eclipse total' : s.event === 'meteoros' ? '☄ Lluvia de meteoros' : '';
+  const evName = s.event ? EVENT_LABEL[s.event] : '';
+  const ev = evName + (s.eventGoal === true ? ' · ✔ cumplido' : s.eventGoal === false ? ' · objetivo pendiente' : '');
   $('hud-event').textContent = ev;
   show('hud-event', !!ev);
   const bn = bossName(s);
@@ -218,6 +263,10 @@ function renderHud(s: Snapshot) {
     <div class="mate ${p.down ? 'down' : ''}">${esc(p.name)} · Nv ${p.level}${p.down ? ' · <b>CAÍDO</b>' : ''}${p.connected ? '' : ' · desconectado'}
       <div class="bar"><div style="width:${(p.hp / p.maxHp) * 100}%"></div></div></div>`).join('');
 }
+const EVENT_LABEL: Record<string, string> = {
+  eclipse: '🌑 Eclipse total', meteoros: '☄ Lluvia de meteoros', cazador: '🎯 Cazador de recompensa',
+  cofre: '💀 Cofre maldito', escolta: '🛡 Escolta',
+};
 const short = (n: string) => n.split(' ').map((w) => w[0]).join('').slice(0, 3).toUpperCase();
 
 // ---------- Subir de nivel ----------
@@ -244,6 +293,7 @@ $('levelup-cards').addEventListener('click', (ev) => {
 });
 window.addEventListener('keydown', (ev) => {
   if (!state.inGame) return;
+  if (ev.key === 'm' || ev.key === 'M') toggleMute();
   if (ev.key === '1' || ev.key === '2' || ev.key === '3') choose(Number(ev.key) - 1);
   if (ev.key === 'f' || ev.key === 'F') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); }
 });
@@ -254,6 +304,7 @@ socket.on('announce', (a: Announcement) => {
   const el = $('announce');
   el.className = `announce show ${a.tone}`;
   el.innerHTML = `<h2>${esc(a.title)}</h2>${a.subtitle ? `<p>${esc(a.subtitle)}</p>` : ''}`;
+  sfx(a.tone === 'boss' ? 'boss' : a.tone === 'event' || a.tone === 'danger' ? 'event' : 'round');
   clearTimeout(announceTimer);
   announceTimer = window.setTimeout(() => el.classList.remove('show'), 3200);
 });
@@ -271,10 +322,25 @@ socket.on('disconnect', () => { if (state.lobby) toast('Conexión perdida. Recon
 socket.on('gameOver', (r: GameOver) => {
   state.inGame = false;
   $('end-title').textContent = r.victory ? 'Victoria' : 'Derrota';
+  $('end-title').classList.toggle('lose', !r.victory);
+  sfx(r.victory ? 'victory' : 'defeat');
   const m = Math.floor(r.seconds / 60), sec = String(r.seconds % 60).padStart(2, '0');
   $('end-sub').textContent = `${mapById(r.mapId).name} · ${difficultyById(r.difficultyId).name} · Ronda ${r.round}/${r.totalRounds} · ${m}:${sec} · ${r.gold} de oro`;
   $('end-stats').innerHTML = r.stats.map((p) => `<tr><td>${esc(p.name)} <small>(${characterById(p.character).name})</small></td><td>${p.level}</td><td>${p.kills}</td><td>${p.damageDealt}</td><td>${p.damageTaken}</td><td>${p.revives}</td></tr>`).join('');
+  $('end-reward').textContent = session.enabled && !session.profile ? 'Jugaste como invitado: inicia sesión para guardar tu progreso.' : '';
   $('end-weapons').innerHTML = r.stats.map((p) => `<div><b>${esc(p.name)}</b>: ${p.weaponDamage.sort((a, b) => b[1] - a[1]).map(([id, d]) => `${weaponById(id).name} ${d}`).join(' · ') || '—'}</div>`).join('');
   showScreen('end');
 });
 $('btn-back').onclick = () => socket.emit('backToLobby');
+
+// Recompensa de cuenta al terminar la partida (RF37)
+socket.on('reward', (r) => {
+  $('end-reward').textContent = `Tu cuenta: +${r.xp} XP · +${r.gold} de oro${r.leveledUp ? ` · ¡Subiste al nivel ${r.level}!` : ''}`;
+  void refreshProfile();
+});
+
+// Cuenta: al iniciar o cerrar sesión se vuelven a dibujar los personajes disponibles
+void initAccount(() => {
+  renderChars('menu-chars');
+  if (state.lobby) renderLobby();
+});

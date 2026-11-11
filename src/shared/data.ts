@@ -93,13 +93,14 @@ export const RESISTANCES: Record<number, Partial<Record<ElementId, number>>> = {
   9: { 3: 0.25, 2: 1.75 }, 11: { 5: 0.5, 2: 1.25 }, 13: { 1: 0.75 },
 };
 
-export type ItemKind = 'oro' | 'curar' | 'iman' | 'bomba' | 'cofre';
+export type ItemKind = 'oro' | 'curar' | 'iman' | 'bomba' | 'cofre' | 'cofre_maldito';
 export const ITEMS: Record<ItemKind, { name: string; value: number }> = {
   oro: { name: 'Bolsa de oro', value: 10 },
   curar: { name: 'Botiquín', value: 30 },
   iman: { name: 'Imán', value: 1 },
   bomba: { name: 'Bomba', value: 500 },
   cofre: { name: 'Cofre', value: 1 },
+  cofre_maldito: { name: 'Cofre maldito', value: 1 },
 };
 /** Botín por tipo de enemigo (tabla botin_enemigo). */
 export const LOOT: Record<number, [ItemKind, number][]> = {
@@ -152,6 +153,9 @@ export const PLAYER_SCALING: Record<number, { count: number; hp: number; xp: num
 export const EVENTS = [
   { id: 'eclipse', name: 'Eclipse total', goal: 'Sobrevive a la ronda viendo solo el área cercana a tu personaje', gold: 120 },
   { id: 'meteoros', name: 'Lluvia de meteoros', goal: 'Esquiva las zonas marcadas; los meteoros dañan a todos', gold: 120 },
+  { id: 'cazador', name: 'Cazador de recompensa', goal: 'Protege al compañero perseguido por el élite y derrótalo', gold: 150 },
+  { id: 'cofre', name: 'Cofre maldito', goal: 'Abre el cofre y vence a la horda de élites que libera', gold: 200 },
+  { id: 'escolta', name: 'Escolta', goal: 'Lleva al superviviente hasta la zona de rescate', gold: 150 },
 ] as const;
 export type EventId = (typeof EVENTS)[number]['id'];
 
@@ -178,3 +182,11 @@ export const PARAMS = {
   sendRate: 20, // estados enviados por segundo (RNF06)
   maxPlayers: 4,
 };
+
+/** Nivel de cuenta necesario para cada personaje y arma (RF40). Lo que no aparece se desbloquea en el nivel 1. */
+export const CHARACTER_LEVEL_REQ: Record<number, number> = { 1: 1, 2: 1, 3: 3, 4: 6 };
+export const WEAPON_LEVEL_REQ: Record<number, number> = { 4: 3, 5: 5, 6: 8 };
+
+/** Atributos de las mejoras permanentes del taller (tabla mejora_permanente). */
+export type PermAttr = 'vida' | 'dano' | 'velocidad' | 'iman' | 'armadura' | 'suerte' | 'oro' | 'revivir';
+export type PermBonus = Partial<Record<PermAttr, number>>;

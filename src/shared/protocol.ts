@@ -5,9 +5,12 @@ export type RoomPhase = 'lobby' | 'playing' | 'ended';
 
 export interface LobbyPlayer {
   id: string; name: string; character: number; ready: boolean; host: boolean; connected: boolean;
+  accountLevel: number; guest: boolean;
 }
 export interface LobbyState {
   code: string; phase: RoomPhase; mapId: number; difficultyId: number; players: LobbyPlayer[];
+  /** Mapas y dificultades que el anfitrión tiene desbloqueados: [idMapa, idDificultad][] (RF38) */
+  unlocked: [number, number][];
 }
 
 export interface PlayerSnap {
@@ -19,6 +22,7 @@ export interface PlayerSnap {
   weapons: [number, number][]; // [idArma, nivel]
   passives: [number, number][]; // [idPasiva, nivel]
   area: number; // multiplicador de área (para dibujar auras y órbitas)
+  speed: number; // velocidad actual en px/s (para mover al jugador en su navegador)
   pendingLevelUps: number;
 }
 
@@ -28,7 +32,7 @@ export interface Snapshot {
   event: EventId | null;
   gold: number; kills: number;
   players: PlayerSnap[];
-  /** Enemigos en arreglo plano: [id, tipo, x, y, vida% (0..100), estado (bit 1 = lento, 2 = quemado, 4 = envenenado)] */
+  /** Enemigos en arreglo plano: [id, tipo, x, y, vida% (0..100), estado (bit 1 = lento, 2 = quemado, 4 = envenenado, 8 = élite)] */
   enemies: number[];
   /** Proyectiles: [id, tipo, x, y] (tipo: 1 pistola, 6 hoja, 101 ocaso, 50 enemigo, 51 jefe) */
   projectiles: number[];
@@ -37,6 +41,12 @@ export interface Snapshot {
   /** Zonas en el suelo: [id, tipo, x, y, radio, segundosRestantes] (tipo 1 = veneno, 2 = meteoro) */
   zones: number[];
   bossId: number | null;
+  /** Evento con objetivo: null = solo sobrevivir, false = pendiente, true = cumplido */
+  eventGoal: boolean | null;
+  /** Jugador perseguido en el evento Cazador de recompensa */
+  hunted: string | null;
+  /** Evento Escolta: [x, y, vida%, zonaX, zonaY] del superviviente y la zona de rescate */
+  escort: number[] | null;
 }
 
 export type FxEvent =
@@ -78,6 +88,7 @@ export interface ServerToClient {
   levelUp: (opts: UpgradeOption[]) => void;
   gameOver: (r: GameOver) => void;
   toast: (msg: string) => void;
+  reward: (r: Reward) => void;
 }
 
 export interface ClientToServer {
@@ -92,3 +103,21 @@ export interface ClientToServer {
   chooseUpgrade: (index: number) => void;
   backToLobby: () => void;
 }
+
+// ---------- Cuentas (API REST) ----------
+export interface Account {
+  id: number; username: string; displayName: string; color: string | null; role: 'jugador' | 'administrador';
+  level: number; xp: number; xpNext: number; gold: number;
+}
+export interface ShopItem {
+  id: number; name: string; attr: string; perLevel: number; maxLevel: number; level: number;
+  cost: number | null; levelReq: number; locked: boolean;
+}
+export interface MapProgress { mapId: number; difficultyId: number; completed: boolean; bestRound: number; bestSeconds: number | null }
+export interface Profile { account: Account; shop: ShopItem[]; progress: MapProgress[] }
+export interface LeaderboardRow { position: number; team: string; result: string; round: number; players: number; seconds: number }
+export interface HistoryRow {
+  date: string; map: string; mode: string; result: string; round: number; seconds: number;
+  character: string; level: number; kills: number; gold: number; xp: number;
+}
+export interface Reward { xp: number; gold: number; level: number; leveledUp: boolean }
