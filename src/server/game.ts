@@ -28,9 +28,9 @@ export interface SimPlayer {
   down: boolean; revive: number; connected: boolean; disconnectedAt: number;
   weapons: OwnedWeapon[]; passives: Map<number, number>;
   pending: number; offer: UpgradeOption[] | null;
-  hurtCd: number; lastMoveAt: number;
+  hurtCd: number; lastMoveAt: number; moveBudget: number;
   /** Impulso: distancia extra disponible y tiempo que queda sin recibir daño */
-  dashBudget: number; dashT: number;
+  dashBudget: number; dashLeft: number; dashT: number;
   kills: number; damageDealt: number; damageTaken: number; revives: number;
   weaponDamage: Map<number, number>; weaponKills: Map<number, number>;
   /** Mejoras permanentes del taller y armas desbloqueadas por nivel de cuenta (RF39, RF40) */
@@ -127,7 +127,7 @@ export class Game {
         id: p.id, name: p.name, char,
         x: W / 2 + Math.cos(a) * 60, y: W / 2 + Math.sin(a) * 60,
         hp: char.hp, level: 1, xp: 0, down: false, revive: 0, connected: true, disconnectedAt: 0,
-        weapons: [], passives: new Map(), pending: 0, offer: null, hurtCd: 0, lastMoveAt: 0, dashBudget: PARAMS.dashDistance, dashT: 0,
+        weapons: [], passives: new Map(), pending: 0, offer: null, hurtCd: 0, lastMoveAt: 0, moveBudget: 6, dashBudget: PARAMS.dashDistance, dashLeft: 0, dashT: 0,
         kills: 0, damageDealt: 0, damageTaken: 0, revives: 0, weaponDamage: new Map(), weaponKills: new Map(),
         perm: p.perm ?? {}, allowedWeapons: p.allowedWeapons ? new Set(p.allowedWeapons) : null,
         extraLives: Math.round(p.perm?.revivir ?? 0), choices: [],
@@ -171,22 +171,31 @@ export class Game {
   move(id: string, x: number, y: number) {
     const p = this.players.get(id);
     if (!p || p.down || !p.connected || !Number.isFinite(x) || !Number.isFinite(y)) return;
-    const elapsed = clamp(this.time - p.lastMoveAt, 0.01, 0.25);
+    // Presupuesto de movimiento: solo crece con el tiempo real de la partida, así que mandar
+    // muchos mensajes seguidos no deja avanzar más de lo que permite la velocidad del personaje
+    const speed = this.speed(p);
+    const elapsed = clamp(this.time - p.lastMoveAt, 0, 0.25);
     p.lastMoveAt = this.time;
-    let max = this.speed(p) * elapsed * 1.35 + 6;
+    p.moveBudget = Math.min(p.moveBudget + speed * elapsed * 1.35, speed * 0.25 * 1.35 + 6);
     const dx = x - p.x, dy = y - p.y;
     const d = Math.hypot(dx, dy);
-    // Impulso: lo que exceda la velocidad normal se descuenta de una reserva que se recarga con el tiempo
-    const extra = Math.min(d - max, p.dashBudget);
-    if (extra > 0) {
-      if (extra > 5 && p.dashT <= 0 && p.dashBudget >= PARAMS.dashDistance * 0.9) {
-        p.dashT = PARAMS.dashSeconds + 0.14; // un instante sin recibir daño
-        this.fxQueue.push({ k: 'dash', id: p.id });
-      }
-      p.dashBudget -= extra;
+    if (d === 0) return;
+    // Impulso: un paso mucho más largo de lo normal lo inicia si la reserva está llena. La reserva
+    // entera pasa a este impulso y tarda en recargarse, así que no se puede encadenar.
+    if (p.dashT <= 0 && p.dashBudget >= PARAMS.dashDistance * 0.9 && d > speed * 0.1 + 4) {
+      p.dashT = PARAMS.dashSeconds + 0.14; // un instante sin recibir daño
+      p.dashLeft = p.dashBudget;
+      p.dashBudget = 0;
+      this.fxQueue.push({ k: 'dash', id: p.id });
+    }
+    let max = Math.min(d, p.moveBudget);
+    p.moveBudget -= max;
+    if (p.dashT > 0 && d > max) {
+      const extra = Math.min(d - max, p.dashLeft);
+      p.dashLeft -= extra;
       max += extra;
     }
-    const k = d > max ? max / d : 1;
+    const k = max / d;
     p.x = clamp(p.x + dx * k, PLAYER_R, W - PLAYER_R);
     p.y = clamp(p.y + dy * k, PLAYER_R, W - PLAYER_R);
     this.field.resolve(p, PLAYER_R);
@@ -788,6 +797,7 @@ export class Game {
       if (!p.connected) continue;
       p.hurtCd -= dt;
       p.dashT -= dt;
+      if (p.dashT <= 0) p.dashLeft = 0;
       p.dashBudget = Math.min(PARAMS.dashDistance, p.dashBudget + (PARAMS.dashDistance / PARAMS.dashCooldown) * dt);
       if (p.down) {
         const helper = [...this.players.values()].some((o) => o !== p && o.connected && !o.down && dist2(o.x, o.y, p.x, p.y) < 75 * 75);

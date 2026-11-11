@@ -252,3 +252,19 @@ test('Desierto de Cristal: la partida corre y avanza de ronda', () => {
   assert.ok(game.round >= 2);
   assert.ok(last && last.shrines.length === 8 && last.buffs.length === 2);
 });
+
+test('mandar muchos mensajes de movimiento no permite ir más rápido', () => {
+  const { game } = quietGame(1);
+  const dt = 1 / PARAMS.tickRate;
+  const p = game.players.get('p0')!;
+  const start = { x: p.x, y: p.y };
+  const speed = game.speed(p);
+  // Un tramposo manda 20 mensajes por tick (800 por segundo) pidiendo ir muy lejos durante 3 segundos:
+  // solo consigue la velocidad normal más los impulsos que le tocan
+  for (let t = 0; t < 3 * PARAMS.tickRate; t++) {
+    game.tick(dt);
+    for (let i = 0; i < 20; i++) game.move('p0', p.x + 5000, p.y);
+  }
+  const moved = Math.hypot(p.x - start.x, p.y - start.y);
+  assert.ok(moved <= speed * 1.35 * 3 + 60 + PARAMS.dashDistance * 2, `se movió ${Math.round(moved)} px en 3 s con velocidad ${Math.round(speed)}`);
+});
