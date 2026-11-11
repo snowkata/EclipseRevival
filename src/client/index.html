@@ -23,8 +23,11 @@
       <div id="hud-boss" class="hud-boss hidden"><div class="boss-name" id="boss-name"></div><div class="bar"><div id="boss-bar"></div></div></div>
       <div class="hud-xp"><div id="hud-xp-bar"></div><span id="hud-level">Nv 1</span></div>
       <div class="hud-team" id="hud-team"></div>
+      <canvas id="minimap" class="minimap" width="168" height="168" title="Mapa"></canvas>
+      <div id="hud-buffs" class="hud-buffs"></div>
       <div class="hud-bottom">
         <div class="hud-hp"><span class="heart">❤</span><div class="bar hp"><div id="hud-hp-bar"></div></div><span id="hud-hp">100 / 100</span></div>
+        <div class="hud-dash" title="Impulso (Espacio)"><span>Impulso</span><div class="bar"><div id="hud-dash-bar"></div></div><kbd>Espacio</kbd></div>
         <div class="hud-loadout"><div id="hud-weapons" class="slots"></div><div id="hud-passives" class="slots"></div></div>
       </div>
       <div id="hud-pending" class="hud-pending hidden"></div>
@@ -76,7 +79,7 @@
             <h3>Unirse a una sala</h3>
             <label>Código <input id="in-code" maxlength="6" placeholder="ABC123" class="code-input" /></label>
             <button id="btn-join">Unirse</button>
-            <p class="hint">Controles: WASD / flechas o mando. Las armas atacan solas. M silencia el sonido, F pantalla completa.</p>
+            <p class="hint">Controles: WASD / flechas o mando. Las armas atacan solas. Espacio da un impulso para esquivar. Quédate junto a un altar para activar su bendición. M silencia el sonido, F pantalla completa.</p>
           </div>
         </div>
         <p id="menu-error" class="error"></p>

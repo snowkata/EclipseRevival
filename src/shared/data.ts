@@ -123,7 +123,7 @@ export const MAPS: MapDef[] = [
     ],
   },
   {
-    id: 2, name: 'Ciudad en Ruinas', desc: 'Calles destruidas llenas de esqueletos y arqueros.', hazard: 'derrumbes', available: true,
+    id: 2, name: 'Ciudad en Ruinas', desc: 'Calles destruidas llenas de esqueletos y arqueros. Cuidado con los derrumbes.', hazard: 'derrumbes', available: true,
     ground: 0x2b2a2e, deco: 0x46434d,
     spawns: [
       { enemy: 2, from: 1, to: 4, weight: 8, role: 'normal' }, { enemy: 3, from: 1, to: null, weight: 6, role: 'normal' }, { enemy: 5, from: 2, to: null, weight: 6, role: 'normal' },
@@ -131,7 +131,17 @@ export const MAPS: MapDef[] = [
       { enemy: 12, from: 5, to: null, weight: 1, role: 'jefe' }, { enemy: 13, from: 10, to: null, weight: 1, role: 'jefe_final' },
     ],
   },
-  { id: 3, name: 'Desierto de Cristal', desc: 'Dunas de cristal bajo un sol negro.', hazard: 'tormenta_arena', available: false, ground: 0x3d3424, deco: 0x5d5036, spawns: [] },
+  {
+    id: 3, name: 'Desierto de Cristal', desc: 'Dunas de cristal bajo un sol negro. Los remolinos de arena persiguen a quien se quede quieto.', hazard: 'tormenta_arena', available: true,
+    ground: 0x3d3424, deco: 0x5d5036,
+    spawns: [
+      { enemy: 1, from: 1, to: 6, weight: 8, role: 'normal' }, { enemy: 2, from: 1, to: 5, weight: 6, role: 'normal' },
+      { enemy: 4, from: 2, to: null, weight: 6, role: 'normal' }, { enemy: 5, from: 3, to: null, weight: 4, role: 'normal' },
+      { enemy: 6, from: 4, to: null, weight: 5, role: 'normal' }, { enemy: 8, from: 6, to: null, weight: 4, role: 'normal' },
+      { enemy: 10, from: 9, to: null, weight: 2, role: 'normal' },
+      { enemy: 12, from: 5, to: null, weight: 1, role: 'jefe' }, { enemy: 13, from: 10, to: null, weight: 1, role: 'jefe_final' },
+    ],
+  },
   { id: 4, name: 'Cripta Helada', desc: 'Túneles congelados donde el suelo resbala.', hazard: 'suelo_hielo', available: false, ground: 0x1c2a33, deco: 0x2f4a5a, spawns: [] },
   { id: 5, name: 'Corazón del Volcán', desc: 'El origen del eclipse, rodeado de lava.', hazard: 'lava', available: false, ground: 0x2e1a16, deco: 0x5a2a1e, spawns: [] },
 ];
@@ -159,6 +169,16 @@ export const EVENTS = [
 ] as const;
 export type EventId = (typeof EVENTS)[number]['id'];
 
+/** Altares del eclipse: puntos del mapa que dan una bendición a todo el equipo al canalizarlos. */
+export type ShrineKind = 'furia' | 'celeridad' | 'vida' | 'fortuna';
+export const SHRINES: Record<ShrineKind, { name: string; desc: string; color: number; seconds: number }> = {
+  furia: { name: 'Altar de la Furia', desc: '+50 % de daño para todo el equipo', color: 0xff5468, seconds: 20 },
+  celeridad: { name: 'Altar del Viento', desc: '+25 % de velocidad y +30 % de cadencia', color: 0x5cc8ff, seconds: 20 },
+  vida: { name: 'Altar del Alba', desc: 'Cura a todos y levanta a los caídos', color: 0x5fe3a1, seconds: 0 },
+  fortuna: { name: 'Altar de la Fortuna', desc: 'Atrae todas las gemas y da oro', color: 0xffc247, seconds: 0 },
+};
+export const SHRINE_KINDS = Object.keys(SHRINES) as ShrineKind[];
+
 /** Parámetros generales (tabla parametro_juego) y constantes de la simulación. */
 export const PARAMS = {
   baseEnemies: 10,
@@ -181,6 +201,14 @@ export const PARAMS = {
   tickRate: 40, // simulación por segundo
   sendRate: 20, // estados enviados por segundo (RNF06)
   maxPlayers: 4,
+  // Impulso (esquiva): un tramo corto y rápido en el que no se recibe daño
+  dashDistance: 130, // píxeles extra que da un impulso
+  dashSeconds: 0.16,
+  dashCooldown: 2.5,
+  // Altares
+  shrineRadius: 70,
+  shrineChannel: 2.5, // segundos junto al altar para activarlo
+  shrineRecharge: 90,
 };
 
 /** Nivel de cuenta necesario para cada personaje y arma (RF40). Lo que no aparece se desbloquea en el nivel 1. */

@@ -1,12 +1,12 @@
 // Obstáculos y decoración de cada mapa. Se generan con una semilla fija por mapa,
 // así el servidor (colisiones) y el navegador (dibujo) obtienen exactamente lo mismo.
-import { PARAMS } from './data.js';
+import { PARAMS, SHRINE_KINDS, type ShrineKind } from './data.js';
 
 export type ObstacleKind =
   // Con colisión
-  | 'arbol' | 'arbol_seco' | 'roca' | 'tocon' | 'muro' | 'columna' | 'farola' | 'estatua'
+  | 'arbol' | 'arbol_seco' | 'roca' | 'tocon' | 'muro' | 'columna' | 'farola' | 'estatua' | 'cristal' | 'cactus'
   // Solo decoración (se puede caminar encima)
-  | 'arbusto' | 'hierba' | 'flores' | 'hongos' | 'escombros' | 'grieta' | 'huesos';
+  | 'arbusto' | 'hierba' | 'flores' | 'hongos' | 'escombros' | 'grieta' | 'huesos' | 'duna' | 'esquirlas';
 
 export interface Obstacle {
   kind: ObstacleKind; x: number; y: number;
@@ -23,10 +23,12 @@ interface KindDef { r: number; weight: number }
 const SOLID: Record<number, Partial<Record<ObstacleKind, KindDef>>> = {
   1: { arbol: { r: 22, weight: 10 }, arbol_seco: { r: 16, weight: 4 }, roca: { r: 24, weight: 4 }, tocon: { r: 15, weight: 2 } },
   2: { muro: { r: 38, weight: 7 }, columna: { r: 18, weight: 6 }, farola: { r: 9, weight: 3 }, estatua: { r: 24, weight: 2 }, roca: { r: 24, weight: 3 } },
+  3: { cristal: { r: 22, weight: 9 }, cactus: { r: 13, weight: 6 }, roca: { r: 24, weight: 5 }, arbol_seco: { r: 16, weight: 2 }, columna: { r: 18, weight: 1 } },
 };
 const DECOR: Record<number, ObstacleKind[]> = {
   1: ['arbusto', 'hierba', 'hierba', 'flores', 'hongos', 'huesos'],
   2: ['escombros', 'escombros', 'grieta', 'grieta', 'huesos', 'hierba'],
+  3: ['duna', 'duna', 'duna', 'esquirlas', 'esquirlas', 'huesos', 'grieta'],
 };
 
 /** Generador pseudoaleatorio determinista (mulberry32). */
@@ -141,4 +143,24 @@ export class ObstacleField {
     }
     return pos;
   }
+}
+
+export interface Shrine { kind: ShrineKind; x: number; y: number }
+const shrineCache = new Map<number, Shrine[]>();
+
+/** Altares de cada mapa: uno por cuadrante, a media distancia del centro y fuera de los obstáculos. */
+export function shrinesFor(mapId: number): Shrine[] {
+  const hit = shrineCache.get(mapId);
+  if (hit) return hit;
+  const W = PARAMS.worldSize, rand = rng(4242 + mapId * 131), field = new ObstacleField(mapId);
+  const kinds = [...SHRINE_KINDS];
+  for (let i = kinds.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [kinds[i], kinds[j]] = [kinds[j], kinds[i]]; }
+  const start = rand() * Math.PI * 2;
+  const out = kinds.map((kind, i) => {
+    const a = start + (i / kinds.length) * Math.PI * 2 + (rand() - 0.5) * 0.5, d = 700 + rand() * 350;
+    const pos = field.resolve({ x: W / 2 + Math.cos(a) * d, y: W / 2 + Math.sin(a) * d }, 60);
+    return { kind, x: Math.round(pos.x), y: Math.round(pos.y) };
+  });
+  shrineCache.set(mapId, out);
+  return out;
 }

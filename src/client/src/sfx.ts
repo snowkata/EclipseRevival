@@ -3,7 +3,7 @@
 
 export type SfxName =
   | 'shoot' | 'hit' | 'crit' | 'kill' | 'gem' | 'item' | 'levelup' | 'hurt' | 'down' | 'revive'
-  | 'boom' | 'bolt' | 'boss' | 'event' | 'round' | 'evolve' | 'victory' | 'defeat' | 'click' | 'gold';
+  | 'boom' | 'bolt' | 'boss' | 'event' | 'round' | 'evolve' | 'victory' | 'defeat' | 'click' | 'gold' | 'dash' | 'shrine';
 
 const KEY = 'er-muted';
 let ctx: AudioContext | null = null;
@@ -96,6 +96,8 @@ const SOUNDS: Record<SfxName, (c: AudioContext, t: number) => void> = {
   evolve: (c, t) => { [N.a4, N.c5, N.e5, N.a5, N.c6, N.e5 * 2].forEach((f, i) => tone(c, t, { type: 'triangle', f, at: i * 0.06, dur: 0.35, vol: 0.2 })); noise(c, t, { dur: 0.7, vol: 0.1, f: 800, to: 7000, kind: 'bandpass', q: 3 }); },
   victory: (c, t) => [N.c5, N.e5, N.g5, N.c6, N.g5, N.c6].forEach((f, i) => { tone(c, t, { type: 'square', f, at: i * 0.15, dur: i === 5 ? 0.9 : 0.2, vol: 0.14 }); tone(c, t, { type: 'triangle', f: f / 2, at: i * 0.15, dur: i === 5 ? 0.9 : 0.2, vol: 0.18 }); }),
   defeat: (c, t) => [N.a4, N.g4, N.e4, N.d4, N.a3].forEach((f, i) => tone(c, t, { type: 'triangle', f, at: i * 0.24, dur: i === 4 ? 1.1 : 0.32, vol: 0.24 })),
+  dash: (c, t) => { noise(c, t, { dur: 0.2, vol: 0.22, f: 500, to: 4200, kind: 'bandpass', q: 1.2 }); tone(c, t, { type: 'sine', f: 300, to: 760, dur: 0.14, vol: 0.1 }); },
+  shrine: (c, t) => { [N.a4, N.e5, N.a5, N.c6, N.e5 * 2].forEach((f, i) => tone(c, t, { type: 'sine', f, at: i * 0.1, dur: 0.9, vol: 0.16 })); tone(c, t, { type: 'triangle', f: N.a3, dur: 1.3, vol: 0.2 }); },
   click: (c, t) => tone(c, t, { type: 'sine', f: 620, to: 880, dur: 0.05, vol: 0.14 }),
 };
 

@@ -1,11 +1,11 @@
 import Phaser from 'phaser';
-import { ELEMENTS, PARAMS, enemyById, mapById, weaponById, type ElementId } from '../../../shared/data.js';
+import { ELEMENTS, PARAMS, SHRINES, enemyById, mapById, weaponById, type ElementId } from '../../../shared/data.js';
 import { orbitAngle, orbitCount } from '../../../shared/formulas.js';
 import type { FxEvent, PlayerSnap, Snapshot } from '../../../shared/protocol.js';
 import { socket } from '../net.js';
 import { state } from '../state.js';
 import { makeTextures, OBSTACLE_ART } from '../textures.js';
-import { ObstacleField, obstaclesFor, PLAYER_RADIUS } from '../../../shared/world.js';
+import { ObstacleField, obstaclesFor, PLAYER_RADIUS, shrinesFor, type Shrine } from '../../../shared/world.js';
 import { sfx } from '../sfx.js';
 
 const W = PARAMS.worldSize;
@@ -44,6 +44,9 @@ export class GameScene extends Phaser.Scene {
   private lastHp = 0;
   private lastXp = -1;
   private walk = 0;
+  private shrines: { def: Shrine; img: Phaser.GameObjects.Image; on: boolean }[] = [];
+  private dash = { t: 0, cd: 0, dx: 1, dy: 0 };
+  private ghosts = 0;
 
   constructor() {
     super('game');
@@ -72,13 +75,18 @@ export class GameScene extends Phaser.Scene {
         .setDepth(o.r > 0 ? ydepth(o.y) : 2);
     }
     this.lastHp = 0; this.lastXp = -1;
+    this.shrines = shrinesFor(map.id).map((def) => ({
+      def, on: true, img: this.add.image(def.x, def.y, `shrine-${def.kind}`).setOrigin(0.5, 66 / 84).setDepth(ydepth(def.y)),
+    }));
+    this.dash = { t: 0, cd: 0, dx: 1, dy: 0 };
+    state.dashReady = 1;
 
     this.zoneG = this.add.graphics().setDepth(3);
     this.fxG = this.add.graphics().setDepth(9);
     this.dark = this.add.renderTexture(0, 0, this.scale.width, this.scale.height).setOrigin(0).setScrollFactor(0).setDepth(50).setVisible(false);
 
     const kb = this.input.keyboard!;
-    this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,SHIFT') as Record<string, Phaser.Input.Keyboard.Key>;
 
     this.fitCamera();
     this.scale.on('resize', this.onResize, this);
@@ -224,6 +232,17 @@ export class GameScene extends Phaser.Scene {
           if (f.item === 'bomba') this.cameras.main.flash(200, 255, 255, 255);
           if (this.onScreen(f.x, f.y)) sfx(f.item === 'oro' ? 'gold' : 'item');
           break;
+        case 'dash': {
+          const v = this.players.get(f.id);
+          if (v && f.id !== state.you && this.onScreen(v.root.x, v.root.y)) sfx('dash');
+          break;
+        }
+        case 'shrine': {
+          const sh = this.shrines[f.i];
+          if (sh) this.boom(f.x, f.y, 260, SHRINES[sh.def.kind].color);
+          sfx('shrine');
+          break;
+        }
         case 'down': if (f.id === state.you) this.cameras.main.shake(300, 0.012); sfx('down'); break;
       }
     }
@@ -296,7 +315,8 @@ export class GameScene extends Phaser.Scene {
     for (const m of this.pickups.values()) m.img.setPosition(m.img.x + (m.tx - m.img.x) * k, m.img.y + (m.ty - m.img.y) * k);
 
     this.drawWeapons(serverT);
-    this.drawZones(s);
+    this.drawZones(s, serverT);
+    this.drawShrines(s, serverT);
     this.drawEvent(s, serverT);
     this.drawBolts(dt);
     this.drawDarkness(s);
@@ -316,7 +336,23 @@ export class GameScene extends Phaser.Scene {
     const pad = this.input.gamepad?.pad1;
     if (pad && (Math.abs(pad.leftStick.x) > 0.2 || Math.abs(pad.leftStick.y) > 0.2)) { dx = pad.leftStick.x; dy = pad.leftStick.y; }
     const len = Math.hypot(dx, dy);
-    if (len > 0) {
+    // Impulso (Espacio, Mayús o botón A del mando): un tramo rápido en la dirección en la que se camina
+    const d = this.dash;
+    d.cd = Math.max(0, d.cd - dt);
+    state.dashReady = 1 - d.cd / (PARAMS.dashCooldown + 0.1);
+    if (len > 0 && d.t <= 0) { d.dx = dx / len; d.dy = dy / len; }
+    if ((Phaser.Input.Keyboard.JustDown(K.SPACE) || Phaser.Input.Keyboard.JustDown(K.SHIFT) || pad?.A) && d.cd <= 0 && d.t <= 0) {
+      d.t = PARAMS.dashSeconds; d.cd = PARAMS.dashCooldown + 0.1;
+      sfx('dash');
+    }
+    if (d.t > 0) {
+      const step = Math.min(dt, d.t), v = PARAMS.dashDistance / PARAMS.dashSeconds + p.speed;
+      d.t -= dt;
+      this.me.x = Phaser.Math.Clamp(this.me.x + d.dx * v * step, 16, W - 16);
+      this.me.y = Phaser.Math.Clamp(this.me.y + d.dy * v * step, 16, W - 16);
+      this.field.resolve(this.me, PLAYER_RADIUS);
+      if ((this.ghosts += dt) > 0.03) { this.ghosts = 0; this.ghost(this.me.x, this.me.y, p.character, d.dx < 0); }
+    } else if (len > 0) {
       const speed = (p.speed * Math.min(1, len)) / len;
       this.me.x = Phaser.Math.Clamp(this.me.x + dx * speed * dt, 16, W - 16);
       this.me.y = Phaser.Math.Clamp(this.me.y + dy * speed * dt, 16, W - 16);
@@ -330,6 +366,31 @@ export class GameScene extends Phaser.Scene {
         socket.emit('move', { x: Math.round(this.me.x * 10) / 10, y: Math.round(this.me.y * 10) / 10 });
       }
     }
+  }
+
+  /** Estela que deja el impulso. */
+  private ghost(x: number, y: number, character: number, flip: boolean) {
+    const g = this.add.image(x, y, `player-${character}`).setDepth(ydepth(y) - 0.001).setAlpha(0.45).setTint(0xbfd9ff).setFlipX(flip);
+    this.tweens.add({ targets: g, alpha: 0, duration: 260, onComplete: () => g.destroy() });
+  }
+
+  /** Altares: cristal encendido si está listo, anillo de canalización y de recarga. */
+  private drawShrines(s: Snapshot, t: number) {
+    const g = this.zoneG, R = PARAMS.shrineRadius;
+    this.shrines.forEach((sh, i) => {
+      const prog = (s.shrines?.[i * 2] ?? 0) / 100, cd = s.shrines?.[i * 2 + 1] ?? 0;
+      const on = cd <= 0, { x, y, kind } = sh.def, color = SHRINES[kind].color;
+      if (on !== sh.on) { sh.on = on; sh.img.setTexture(on ? `shrine-${kind}` : `shrine-${kind}-off`); }
+      if (!this.onScreen(x, y)) return;
+      if (on) {
+        g.fillStyle(color, 0.07 + Math.sin(t * 2.5) * 0.03).fillCircle(x, y, R);
+        g.lineStyle(2, color, 0.5).strokeCircle(x, y, R);
+        if (prog > 0) g.lineStyle(6, 0xffffff, 0.95).beginPath().arc(x, y, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * prog).strokePath();
+      } else {
+        g.lineStyle(2, 0xffffff, 0.12).strokeCircle(x, y, R);
+        g.lineStyle(3, color, 0.5).beginPath().arc(x, y, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - cd / PARAMS.shrineRecharge)).strokePath();
+      }
+    });
   }
 
   /** Dibuja órbitas y auras con la misma fórmula que usa el servidor. */
@@ -362,7 +423,7 @@ export class GameScene extends Phaser.Scene {
     for (let i = used; i < this.orbs.length; i++) this.orbs[i].setVisible(false);
   }
 
-  private drawZones(s: Snapshot) {
+  private drawZones(s: Snapshot, t: number) {
     const g = this.zoneG;
     g.clear();
     const z = s.zones;
@@ -371,6 +432,13 @@ export class GameScene extends Phaser.Scene {
       if (type === 1) {
         g.fillStyle(0x7cfc00, 0.22).fillCircle(x, y, r);
         g.lineStyle(2, 0x7cfc00, 0.45).strokeCircle(x, y, r);
+      } else if (type === 3) {
+        // Remolino de arena: anillos que giran
+        g.fillStyle(0xd9b36c, 0.16).fillCircle(x, y, r);
+        for (let k = 0; k < 4; k++) {
+          const a = t * (3 + k) + k * 1.7, rr = r * (0.3 + k * 0.22);
+          g.lineStyle(4 - k * 0.5, 0xf2d79b, 0.55 - k * 0.08).beginPath().arc(x, y, rr, a, a + 3.6).strokePath();
+        }
       } else {
         const p = Phaser.Math.Clamp(1 - life / 1.6, 0, 1);
         g.lineStyle(3, 0xff3b3b, 0.9).strokeCircle(x, y, r);

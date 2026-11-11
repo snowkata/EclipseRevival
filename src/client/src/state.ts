@@ -8,4 +8,6 @@ export const state = {
   mapId: 1,
   difficultyId: 2,
   inGame: false,
+  /** Recarga del impulso del jugador local: 0 = recién usado, 1 = listo */
+  dashReady: 1,
 };

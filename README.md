@@ -44,7 +44,9 @@ Las pruebas de `tests/db.test.ts` solo corren si existe `DATABASE_URL`; úsalas 
 
 - Mover: `WASD`, flechas o stick izquierdo del mando.
 - Elegir mejora al subir de nivel: teclas `1`, `2`, `3` o clic.
-- Pantalla completa: `F`.
+- Impulso para esquivar (un instante sin recibir daño, se recarga en 2.5 s): `Espacio`, `Mayús` o botón A del mando.
+- Altares: quedarse junto a uno 2.5 segundos activa su bendición para todo el equipo.
+- Pantalla completa: `F`. Silenciar: `M`.
 - Revivir a un compañero caído: quedarse junto a él 3 segundos.
 
 ## Qué incluye esta primera versión
@@ -53,7 +55,8 @@ Las pruebas de `tests/db.test.ts` solo corren si existe `DATABASE_URL`; úsalas 
 - Servidor autoritativo: enemigos, daño, experiencia y oro se calculan en el servidor; el navegador solo dibuja y manda su posición, que el servidor valida.
 - 4 personajes, 6 armas (proyectil, órbita, aura, rayo y área), 4 evoluciones, 8 pasivas, combos elementales entre jugadores.
 - Rondas de 60 s, tres dificultades (10, 15 y 20 rondas), jefe cada 5 rondas y jefe final.
-- 2 mapas jugables (Bosque Marchito y Ciudad en Ruinas); los otros 3 aparecen como "próximamente".
+- 3 mapas jugables (Bosque Marchito, Ciudad en Ruinas con derrumbes y Desierto de Cristal con remolinos de arena); los otros 2 aparecen como "próximamente".
+- Altares con bendiciones de equipo (furia, viento, alba y fortuna), impulso para esquivar y minimapa.
 - 5 eventos especiales: Eclipse total, Lluvia de meteoros, Cazador de recompensa, Cofre maldito y Escolta. Los tres últimos tienen un objetivo y solo dan recompensa si se cumple.
 - Gemas de experiencia compartidas, objetos (oro, botiquín, imán, bomba, cofre) y pantalla de resultados.
 
@@ -62,7 +65,7 @@ El arte es provisional: se dibuja con código mientras se diseñan los sprites.
 ## Pendiente
 
 - Leer los valores de armas, enemigos y mapas desde la base de datos, y el panel de administración.
-- Peligros de cada mapa y los 3 mapas restantes.
+- Los 2 mapas restantes (Cripta Helada y Corazón del Volcán) con sus peligros.
 - Arte, sonido y música definitivos.
 
 ## Estructura
