@@ -61,7 +61,10 @@ Cada vez que se sube algo a `main`, Render vuelve a desplegar solo. En el plan g
 - Límites: 80 mensajes por segundo por conexión (desconecta si pasa de 400), 10 conexiones por IP, 5 salas creadas por minuto por IP, 15 códigos de sala incorrectos por minuto por IP (frena a quien intenta adivinarlos), 100 salas a la vez, 20 intentos de inicio de sesión cada 5 min y 120 consultas a la API por minuto por IP.
 - Los códigos de sala tienen 6 caracteres de un alfabeto de 32 (más de mil millones de combinaciones) y se generan con `crypto.randomBytes`. Para volver a una sala tras desconectarse se usa un token secreto de 96 bits, no el código.
 - Cabeceras de seguridad en todas las respuestas (Content-Security-Policy, X-Frame-Options, nosniff, HSTS en producción). Por defecto solo se aceptan conexiones desde la propia página (sin CORS abierto).
-- El servidor es autoritativo: daño, experiencia, oro y desbloqueos se calculan en el servidor; el movimiento que manda el navegador se limita a la velocidad del personaje.
+- El servidor es autoritativo: daño, experiencia, oro y desbloqueos se calculan en el servidor. El movimiento que manda el navegador tiene un presupuesto que solo crece con el tiempo de partida, así que mandar muchos mensajes no permite ir más rápido.
+- Todas las consultas SQL usan parámetros (`$1`, `$2`…), nunca texto pegado, así que no hay inyección SQL. Los nombres de jugadores se escapan antes de mostrarse y la política CSP bloquea scripts ajenos.
+- Una cuenta solo puede estar en una sala a la vez, y una cuenta desactivada no puede comprar ni editar su perfil aunque conserve una sesión.
+- Dependencias sin vulnerabilidades conocidas (`npm audit`).
 
 ## Controles
 

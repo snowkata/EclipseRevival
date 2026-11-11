@@ -67,11 +67,11 @@ app.patch('/api/profile', api(async (req) => ({ account: await updateProfile(use
 app.post('/api/shop/buy', api(async (req) => { const id = userId(req); await buyUpgrade(id, req.body?.id); return getProfile(id); }));
 app.get('/api/leaderboard', api(async (req) => ({ rows: await leaderboard(Number(req.query.map) || 1, Number(req.query.difficulty) || 2) })));
 app.get('/api/history', api(async (req) => ({ rows: await history(userId(req)) })));
+app.use('/api', (_req, res) => void res.status(404).json({ error: 'No existe esa ruta.' }));
 
-app.use('/api', (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+app.use('/api', (err: unknown, _req: Request, res: Response, next: NextFunction) => {
   if (err instanceof ApiError) return void res.status(err.status).json({ error: err.message });
-  console.error('[api]', err);
-  res.status(500).json({ error: 'Error del servidor. Inténtalo de nuevo.' });
+  next(err);
 });
 
 // En producción el mismo servidor entrega el juego ya compilado (dist/client)
@@ -90,6 +90,13 @@ io.use((socket, next) => {
   socket.data.ip = ip;
   socket.on('disconnect', () => connections.remove(ip));
   next();
+});
+
+// Cualquier otro error (por ejemplo, un JSON mal formado) responde sin dar detalles internos
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  const status = Number((err as { status?: number })?.status) || 500;
+  if (status >= 500) console.error('[http]', err);
+  res.status(status >= 400 && status < 600 ? status : 500).json({ error: status < 500 ? 'Petición no válida.' : 'Error del servidor.' });
 });
 
 // El navegador manda su token de sesión al conectarse; sin token entra como invitado

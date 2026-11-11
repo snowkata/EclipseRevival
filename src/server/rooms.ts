@@ -267,9 +267,18 @@ export class RoomManager {
       });
     };
 
+    /** Una cuenta solo puede estar en una sala a la vez (evita ganar premios en varias partidas en paralelo). */
+    const accountBusy = () => {
+      const acc = socket.data.account;
+      if (!acc) return false;
+      for (const r of this.rooms.values()) if (r.players.some((p) => p.userId === acc.id)) return true;
+      return false;
+    };
+
     on('createRoom', (raw) => {
       const o = asObject(raw);
       if (!o || current()) return;
+      if (accountBusy()) return void socket.emit('errorMsg', 'Tu cuenta ya está en otra sala.');
       if (this.rooms.size >= MAX_ROOMS) return void socket.emit('errorMsg', 'El servidor está lleno. Inténtalo en unos minutos.');
       if (!roomCreateLimit.take(ip)) return void socket.emit('errorMsg', 'Has creado demasiadas salas. Espera un minuto.');
       const room = new Room(this.newCode(), this.io, (r) => this.rooms.delete(r.code));
@@ -295,8 +304,7 @@ export class RoomManager {
       if (back) return void room.attach(back, socket);
       if (room.phase !== 'lobby') return void socket.emit('errorMsg', 'La partida de esa sala ya empezó.');
       if (room.players.length >= PARAMS.maxPlayers) return void socket.emit('errorMsg', 'La sala está llena (máximo 4 jugadores).');
-      const acc = socket.data.account;
-      if (acc && room.players.some((p) => p.userId === acc.id)) return void socket.emit('errorMsg', 'Tu cuenta ya está en esa sala.');
+      if (accountBusy()) return void socket.emit('errorMsg', 'Tu cuenta ya está en una sala.');
       room.add(socket, o.name, o.character);
     });
 

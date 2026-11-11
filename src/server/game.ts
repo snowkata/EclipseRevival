@@ -28,7 +28,7 @@ export interface SimPlayer {
   down: boolean; revive: number; connected: boolean; disconnectedAt: number;
   weapons: OwnedWeapon[]; passives: Map<number, number>;
   pending: number; offer: UpgradeOption[] | null;
-  hurtCd: number; lastMoveAt: number;
+  hurtCd: number; lastMoveAt: number; moveBudget: number;
   kills: number; damageDealt: number; damageTaken: number; revives: number;
   weaponDamage: Map<number, number>; weaponKills: Map<number, number>;
   /** Mejoras permanentes del taller y armas desbloqueadas por nivel de cuenta (RF39, RF40) */
@@ -118,7 +118,7 @@ export class Game {
         id: p.id, name: p.name, char,
         x: W / 2 + Math.cos(a) * 60, y: W / 2 + Math.sin(a) * 60,
         hp: char.hp, level: 1, xp: 0, down: false, revive: 0, connected: true, disconnectedAt: 0,
-        weapons: [], passives: new Map(), pending: 0, offer: null, hurtCd: 0, lastMoveAt: 0,
+        weapons: [], passives: new Map(), pending: 0, offer: null, hurtCd: 0, lastMoveAt: 0, moveBudget: 6,
         kills: 0, damageDealt: 0, damageTaken: 0, revives: 0, weaponDamage: new Map(), weaponKills: new Map(),
         perm: p.perm ?? {}, allowedWeapons: p.allowedWeapons ? new Set(p.allowedWeapons) : null,
         extraLives: Math.round(p.perm?.revivir ?? 0), choices: [],
@@ -161,12 +161,18 @@ export class Game {
   move(id: string, x: number, y: number) {
     const p = this.players.get(id);
     if (!p || p.down || !p.connected || !Number.isFinite(x) || !Number.isFinite(y)) return;
-    const elapsed = clamp(this.time - p.lastMoveAt, 0.01, 0.25);
+    // Presupuesto de movimiento: solo crece con el tiempo real de la partida, así que mandar
+    // muchos mensajes seguidos no deja avanzar más de lo que permite la velocidad del personaje
+    const speed = this.speed(p);
+    const elapsed = clamp(this.time - p.lastMoveAt, 0, 0.25);
     p.lastMoveAt = this.time;
-    const max = this.speed(p) * elapsed * 1.35 + 6;
+    p.moveBudget = Math.min(p.moveBudget + speed * elapsed * 1.35, speed * 0.25 * 1.35 + 6);
     const dx = x - p.x, dy = y - p.y;
     const d = Math.hypot(dx, dy);
-    const k = d > max ? max / d : 1;
+    if (d === 0) return;
+    const max = Math.min(d, p.moveBudget);
+    p.moveBudget -= max;
+    const k = max / d;
     p.x = clamp(p.x + dx * k, PLAYER_R, W - PLAYER_R);
     p.y = clamp(p.y + dy * k, PLAYER_R, W - PLAYER_R);
     this.field.resolve(p, PLAYER_R);
