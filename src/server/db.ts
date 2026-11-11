@@ -13,8 +13,17 @@ const url = process.env.DATABASE_URL;
  */
 function sslConfig(): pg.PoolConfig['ssl'] {
   if (process.env.DATABASE_SSL === 'off') return undefined;
+  // El certificado puede venir pegado en DATABASE_CA o como archivo en DATABASE_CA_FILE
+  // (en Render: "Secret Files", que quedan en /etc/secrets/<nombre>)
+  if (process.env.DATABASE_CA) return { ca: process.env.DATABASE_CA.replace(/\\n/g, '\n') };
   const caFile = process.env.DATABASE_CA_FILE;
-  return caFile ? { ca: readFileSync(caFile, 'utf8') } : true;
+  if (!caFile) return true;
+  try {
+    return { ca: readFileSync(caFile, 'utf8') };
+  } catch {
+    console.error(`[bd] No se encontró el certificado ${caFile}. Revisa DATABASE_CA_FILE.`);
+    return true;
+  }
 }
 
 export const pool: pg.Pool | null = url ? new pg.Pool({ connectionString: url, max: 10, ssl: sslConfig() }) : null;

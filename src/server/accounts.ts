@@ -8,6 +8,11 @@ import type { Account, HistoryRow, LeaderboardRow, MapProgress, Profile, ShopIte
 import { dbEnabled, query, transaction } from './db.js';
 
 const SECRET = process.env.JWT_SECRET ?? randomBytes(32).toString('hex');
+if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 32) {
+  // Una clave corta se puede adivinar y con ella cualquiera fabricaría sesiones falsas
+  console.error('[cuentas] JWT_SECRET es muy corta: usa al menos 32 caracteres aleatorios.');
+  if (process.env.NODE_ENV === 'production') process.exit(1);
+}
 if (!process.env.JWT_SECRET && dbEnabled()) console.warn('[cuentas] Falta JWT_SECRET: las sesiones se cerrarán al reiniciar el servidor.');
 
 export class ApiError extends Error {
@@ -25,11 +30,11 @@ const toAccount = (u: UserRow): Account => ({
 });
 
 /** Sesión de 24 horas (RNF13). */
-export const signToken = (userId: number) => jwt.sign({ sub: String(userId) }, SECRET, { expiresIn: '24h' });
+export const signToken = (userId: number) => jwt.sign({ sub: String(userId) }, SECRET, { expiresIn: '24h', algorithm: 'HS256' });
 export function verifyToken(token: unknown): number | null {
-  if (typeof token !== 'string' || !token) return null;
+  if (typeof token !== 'string' || !token || token.length > 1000) return null;
   try {
-    const p = jwt.verify(token, SECRET) as { sub?: string };
+    const p = jwt.verify(token, SECRET, { algorithms: ['HS256'] }) as { sub?: string };
     const id = Number(p.sub);
     return Number.isInteger(id) ? id : null;
   } catch {

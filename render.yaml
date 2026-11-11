@@ -1,0 +1,27 @@
+# Configuración para desplegar en Render (https://render.com) con "New > Blueprint".
+# Plan gratis: el servidor se duerme tras 15 min sin visitas y tarda ~1 min en despertar.
+services:
+  - type: web
+    name: eclipse-revival
+    runtime: node
+    plan: free
+    region: virginia # misma región que la base de Supabase (us-east-1)
+    branch: main
+    autoDeploy: true
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 22.12.0
+      # Clave de las sesiones: Render la genera sola, larga y aleatoria
+      - key: JWT_SECRET
+        generateValue: true
+      # Cadena de conexión de Supabase (con la contraseña): se pega a mano en el panel de Render
+      - key: DATABASE_URL
+        sync: false
+      # Certificado de Supabase subido en Environment > Secret Files con el nombre prod-ca-2021.crt
+      - key: DATABASE_CA_FILE
+        value: /etc/secrets/prod-ca-2021.crt
