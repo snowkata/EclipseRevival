@@ -4,11 +4,11 @@ Videojuego web cooperativo de supervivencia por rondas (1 a 4 jugadores). Las ar
 
 ## Cómo ejecutarlo
 
-Requiere Node.js 22 o superior.
+Requiere Node.js 22 o superior y [pnpm](https://pnpm.io/installation).
 
 ```bash
-npm install
-npm run dev        # servidor en :3000 y cliente en http://localhost:5173
+pnpm install
+pnpm dev        # servidor en :3000 y cliente en http://localhost:5173
 ```
 
 Para probar el multijugador abre el juego en dos pestañas: en una crea la sala y en la otra únete con el código (o con el enlace `?sala=CODIGO`).
@@ -16,10 +16,10 @@ Para probar el multijugador abre el juego en dos pestañas: en una crea la sala 
 Otros comandos:
 
 ```bash
-npm run build      # compila cliente (dist/client) y servidor (dist/server.js)
-npm start          # sirve el juego compilado en http://localhost:3000
-npm test           # pruebas de la simulación
-npm run typecheck
+pnpm build      # compila cliente (dist/client) y servidor (dist/server.js)
+pnpm start      # sirve el juego compilado en http://localhost:3000
+pnpm test       # pruebas de la simulación
+pnpm typecheck
 ```
 
 ## Base de datos y cuentas
@@ -64,7 +64,7 @@ Cada vez que se sube algo a `main`, Render vuelve a desplegar solo. En el plan g
 - El servidor es autoritativo: daño, experiencia, oro y desbloqueos se calculan en el servidor. El movimiento que manda el navegador tiene un presupuesto que solo crece con el tiempo de partida, así que mandar muchos mensajes no permite ir más rápido.
 - Todas las consultas SQL usan parámetros (`$1`, `$2`…), nunca texto pegado, así que no hay inyección SQL. Los nombres de jugadores se escapan antes de mostrarse y la política CSP bloquea scripts ajenos.
 - Una cuenta solo puede estar en una sala a la vez, y una cuenta desactivada no puede comprar ni editar su perfil aunque conserve una sesión.
-- Dependencias sin vulnerabilidades conocidas (`npm audit`).
+- Dependencias sin vulnerabilidades conocidas (`pnpm audit`).
 
 ## Controles
 

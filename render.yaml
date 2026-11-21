@@ -8,8 +8,9 @@ services:
     region: virginia # misma región que la base de Supabase (us-east-1)
     branch: main
     autoDeploy: true
-    buildCommand: npm ci --include=dev && npm run build
-    startCommand: npm start
+    # pnpm se ejecuta con npx (versión fija) para no depender de corepack
+    buildCommand: npx --yes pnpm@12.21.0 install --frozen-lockfile --prod=false && npx --yes pnpm@12.21.0 run build
+    startCommand: npx --yes pnpm@12.21.0 start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
