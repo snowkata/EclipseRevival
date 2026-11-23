@@ -2,6 +2,12 @@
 
 Videojuego web cooperativo de supervivencia por rondas (1 a 4 jugadores). Las armas atacan solas, los enemigos llegan en hordas y el equipo debe aguantar hasta derrotar al jefe final.
 
+Integrantes:
+Angel Horacio Sanchez Torres
+Jorge Antonio Godínez Barajas
+Jesus Enrique Mendoza Villa
+Diego López Álvarez
+
 ## Cómo ejecutarlo
 
 Requiere Node.js 22 o superior y [pnpm](https://pnpm.io/installation).
