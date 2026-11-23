@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { CHARACTERS, CHARACTER_LEVEL_REQ, DIFFICULTIES, MAPS, characterById, difficultyById, mapById, passiveById, weaponById } from '../../shared/data.js';
+import { CHARACTERS, CHARACTER_LEVEL_REQ, DIFFICULTIES, MAPS, PARAMS, SHRINES, characterById, difficultyById, mapById, passiveById, weaponById } from '../../shared/data.js';
 import type { Announcement, GameOver, Snapshot, UpgradeOption } from '../../shared/protocol.js';
 import { accountLevel, initAccount, refreshProfile, session } from './account.js';
 import { loadSession, saveSession, socket } from './net.js';
@@ -7,6 +7,7 @@ import { GameScene, bossHp, bossName } from './scenes/GameScene.js';
 import { state } from './state.js';
 import { isMuted, setMuted, sfx, unlockAudio } from './sfx.js';
 import { makeTextures } from './textures.js';
+import { shrinesFor } from '../../shared/world.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -230,7 +231,7 @@ function stopGame() {
 let lastHud = 0;
 socket.on('snap', (s) => {
   const now = performance.now();
-  if (now - lastHud > 100) { lastHud = now; renderHud(s); }
+  if (now - lastHud > 100) { lastHud = now; renderHud(s); drawMinimap(s); }
 });
 
 // ---------- HUD ----------
@@ -244,6 +245,10 @@ function renderHud(s: Snapshot) {
   const ev = evName + (s.eventGoal === true ? ' · ✔ cumplido' : s.eventGoal === false ? ' · objetivo pendiente' : '');
   $('hud-event').textContent = ev;
   show('hud-event', !!ev);
+  const [fury, haste] = s.buffs ?? [0, 0];
+  $('hud-buffs').innerHTML = (fury > 0 ? `<span class="buff fury">🔥 Furia ${fury}s</span>` : '') + (haste > 0 ? `<span class="buff haste">💨 Viento ${haste}s</span>` : '');
+  $('hud-dash-bar').style.width = `${Math.max(0, Math.min(1, state.dashReady)) * 100}%`;
+  $('hud-dash-bar').classList.toggle('ready', state.dashReady >= 1);
   const bn = bossName(s);
   show('hud-boss', !!bn);
   if (bn) { $('boss-name').textContent = bn; $('boss-bar').style.width = `${bossHp(s) * 100}%`; }
@@ -263,6 +268,41 @@ function renderHud(s: Snapshot) {
     <div class="mate ${p.down ? 'down' : ''}">${esc(p.name)} · Nv ${p.level}${p.down ? ' · <b>CAÍDO</b>' : ''}${p.connected ? '' : ' · desconectado'}
       <div class="bar"><div style="width:${(p.hp / p.maxHp) * 100}%"></div></div></div>`).join('');
 }
+// ---------- Minimapa ----------
+const mini = $<HTMLCanvasElement>('minimap');
+const miniCtx = mini.getContext('2d')!;
+const cssColor = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
+function drawMinimap(s: Snapshot) {
+  const c = miniCtx, S = mini.width, k = S / PARAMS.worldSize;
+  c.clearRect(0, 0, S, S);
+  c.fillStyle = 'rgba(8, 7, 20, .72)';
+  c.fillRect(0, 0, S, S);
+  // Enemigos: puntos rojos; los élites y el jefe, más grandes
+  for (let i = 0; i < s.enemies.length; i += 6) {
+    const boss = s.enemies[i] === s.bossId, elite = (s.enemies[i + 5] & 8) !== 0;
+    c.fillStyle = boss ? '#ff5468' : elite ? '#ff9fbf' : 'rgba(255, 84, 104, .7)';
+    const r = boss ? 5 : elite ? 3 : 1.2;
+    c.fillRect(s.enemies[i + 2] * k - r, s.enemies[i + 3] * k - r, r * 2, r * 2);
+  }
+  // Altares: rombo de su color si están listos, gris si se están recargando
+  shrinesFor(state.mapId).forEach((sh, i) => {
+    const x = sh.x * k, y = sh.y * k, ready = (s.shrines?.[i * 2 + 1] ?? 0) <= 0;
+    c.fillStyle = ready ? cssColor(SHRINES[sh.kind].color) : '#5a5870';
+    c.beginPath(); c.moveTo(x, y - 6); c.lineTo(x + 5, y); c.lineTo(x, y + 6); c.lineTo(x - 5, y); c.closePath(); c.fill();
+  });
+  if (s.escort) {
+    c.strokeStyle = '#5fe3a1'; c.lineWidth = 2;
+    c.beginPath(); c.arc(s.escort[3] * k, s.escort[4] * k, 5, 0, Math.PI * 2); c.stroke();
+    c.fillStyle = '#5fe3a1'; c.fillRect(s.escort[0] * k - 2.5, s.escort[1] * k - 2.5, 5, 5);
+  }
+  for (const p of s.players) {
+    const me = p.id === state.you;
+    c.fillStyle = p.down ? '#888' : cssColor(characterById(p.character).color);
+    c.strokeStyle = me ? '#fff' : 'rgba(0,0,0,.6)'; c.lineWidth = me ? 2 : 1;
+    c.beginPath(); c.arc(p.x * k, p.y * k, me ? 4.5 : 3.5, 0, Math.PI * 2); c.fill(); c.stroke();
+  }
+}
+
 const EVENT_LABEL: Record<string, string> = {
   eclipse: '🌑 Eclipse total', meteoros: '☄ Lluvia de meteoros', cazador: '🎯 Cazador de recompensa',
   cofre: '💀 Cofre maldito', escolta: '🛡 Escolta',

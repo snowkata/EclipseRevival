@@ -38,7 +38,7 @@ export interface Snapshot {
   projectiles: number[];
   /** Gemas y objetos: [id, tipo, x, y] (tipo 0..2 = gema chica/media/grande, 10+ = objeto) */
   pickups: number[];
-  /** Zonas en el suelo: [id, tipo, x, y, radio, segundosRestantes] (tipo 1 = veneno, 2 = meteoro) */
+  /** Zonas en el suelo: [id, tipo, x, y, radio, segundosRestantes] (tipo 1 = veneno, 2 = meteoro o derrumbe, 3 = remolino de arena) */
   zones: number[];
   bossId: number | null;
   /** Evento con objetivo: null = solo sobrevivir, false = pendiente, true = cumplido */
@@ -47,6 +47,10 @@ export interface Snapshot {
   hunted: string | null;
   /** Evento Escolta: [x, y, vida%, zonaX, zonaY] del superviviente y la zona de rescate */
   escort: number[] | null;
+  /** Altares, en el orden de shrinesFor(mapa): [progreso de canalización 0..100, segundos de recarga] por altar */
+  shrines: number[];
+  /** Bendiciones activas del equipo: segundos restantes de [furia, celeridad] */
+  buffs: [number, number];
 }
 
 export type FxEvent =
@@ -58,7 +62,9 @@ export type FxEvent =
   | { k: 'pickup'; x: number; y: number; item: ItemKind }
   | { k: 'evolve'; id: string; weapon: number }
   | { k: 'revive'; id: string }
-  | { k: 'down'; id: string };
+  | { k: 'down'; id: string }
+  | { k: 'dash'; id: string }
+  | { k: 'shrine'; i: number; x: number; y: number };
 
 export interface Announcement { title: string; subtitle?: string; tone: 'round' | 'boss' | 'event' | 'info' | 'danger' }
 

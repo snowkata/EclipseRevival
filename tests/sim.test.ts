@@ -167,19 +167,104 @@ test('obstáculos: lista determinista, centro libre y colisión', async () => {
   }
 });
 
-test('mandar muchos mensajes de movimiento no permite ir más rápido', () => {
-  const game = new Game(1, 2, [{ id: 'a', name: 'A', character: 1 }], {
-    snapshot: () => {}, fx: () => {}, announce: () => {}, toast: () => {}, offer: () => {}, end: () => {},
-  });
+function quietGame(mapId: number, n = 1) {
+  const fx: string[] = [];
+  const players = Array.from({ length: n }, (_, i) => ({ id: `p${i}`, name: `Bot ${i}`, character: 1 }));
+  const game = new Game(mapId, 1, players, { snapshot: () => {}, fx: (l) => fx.push(...l.map((f) => f.k)), announce: () => {}, toast: () => {}, offer: () => {}, end: () => {} });
+  return { game, fx };
+}
+
+test('impulso: permite un tramo rápido, se recarga y no deja ir más rápido de forma sostenida', () => {
+  const { game } = quietGame(1);
+  const p = game.players.get('p0')!;
   const dt = 1 / PARAMS.tickRate;
-  const p = game.players.get('a')!;
+  const x0 = p.x;
+  // Sin impulso: pedir un salto enorme solo avanza lo normal más la reserva
+  game.tick(dt);
+  game.move('p0', p.x + 1000, p.y);
+  const first = p.x - x0;
+  assert.ok(first > PARAMS.dashDistance && first < PARAMS.dashDistance + 40, `avance con impulso: ${first}`);
+  assert.ok(p.dashT > 0, 'durante el impulso no se recibe daño');
+  const hp = p.hp;
+  (game as unknown as { hurtPlayer(p: unknown, d: number, i?: boolean): void }).hurtPlayer(p, 50, true);
+  assert.equal(p.hp, hp);
+  // Inmediatamente después la reserva está vacía: vuelve a la velocidad normal
+  game.tick(dt);
+  const x1 = p.x;
+  game.move('p0', p.x + 1000, p.y);
+  assert.ok(p.x - x1 < 20, `sin reserva: ${p.x - x1}`);
+  // Tras la recarga vuelve a estar disponible
+  for (let i = 0; i < PARAMS.dashCooldown * PARAMS.tickRate + 2; i++) game.tick(dt);
+  assert.ok(p.dashBudget >= PARAMS.dashDistance - 0.01);
+});
+
+test('altares: se activan al canalizar, dan la bendición y se recargan', async () => {
+  const { shrinesFor } = await import('../src/shared/world.js');
+  const { SHRINE_KINDS } = await import('../src/shared/data.js');
+  for (const mapId of [1, 2, 3]) {
+    const list = shrinesFor(mapId);
+    assert.deepEqual(list.map((s) => s.kind).sort(), [...SHRINE_KINDS].sort());
+    assert.ok(list.every((s) => s.x > 100 && s.y > 100 && s.x < PARAMS.worldSize - 100 && s.y < PARAMS.worldSize - 100));
+  }
+  const { game } = quietGame(1, 2);
+  const [a, b] = [...game.players.values()];
+  const dt = 1 / PARAMS.tickRate;
+  const stand = (kind: string) => {
+    const s = game.shrines.find((x) => x.kind === kind)!;
+    a.x = s.x; a.y = s.y + 30; a.hp = 9999; // no debe caer mientras canaliza
+    for (let i = 0; i < (PARAMS.shrineChannel + 0.2) * PARAMS.tickRate; i++) { a.x = s.x; a.y = s.y + 30; game.tick(dt); }
+    assert.ok(s.cd > PARAMS.shrineRecharge - 1, `${kind} debe quedar en recarga`);
+  };
+  const base = game.speed(a);
+  stand('celeridad');
+  assert.ok(game.hasteT > 0 && game.speed(a) > base * 1.2);
+  stand('furia');
+  assert.ok(game.furyT > 0);
+  b.down = true; b.hp = 0;
+  stand('vida');
+  assert.equal(b.down, false);
+  assert.ok(b.hp > 0);
+  const gold = game.gold;
+  stand('fortuna');
+  assert.ok(game.gold > gold);
+});
+
+test('peligros del mapa: derrumbes en la ciudad y remolinos en el desierto', () => {
+  const dt = 1 / PARAMS.tickRate;
+  for (const [mapId, type] of [[2, 2], [3, 3]] as const) {
+    const { game } = quietGame(mapId);
+    const p = game.players.get('p0')!;
+    let seen = false;
+    for (let i = 0; i < 20 * PARAMS.tickRate && !seen; i++) { p.hp = 9999; game.tick(dt); seen = game.zones.some((z) => z.type === type); }
+    assert.ok(seen, `mapa ${mapId}: debe aparecer una zona de tipo ${type}`);
+  }
+  // El remolino daña al jugador que se queda dentro
+  const { game } = quietGame(3);
+  const p = game.players.get('p0')!;
+  game.zones.push({ id: 99999, type: 3, x: p.x, y: p.y, r: 75, life: 3, tick: 0, vx: 0, vy: 0, dmg: 7, el: 1, owner: null, weapon: 0, crit: 0 });
+  const hp = p.hp;
+  game.tick(dt);
+  assert.ok(p.hp < hp);
+});
+
+test('Desierto de Cristal: la partida corre y avanza de ronda', () => {
+  const { game, last } = simulate(3, 1, 2, 130);
+  assert.ok(game.round >= 2);
+  assert.ok(last && last.shrines.length === 8 && last.buffs.length === 2);
+});
+
+test('mandar muchos mensajes de movimiento no permite ir más rápido', () => {
+  const { game } = quietGame(1);
+  const dt = 1 / PARAMS.tickRate;
+  const p = game.players.get('p0')!;
   const start = { x: p.x, y: p.y };
   const speed = game.speed(p);
-  // Un tramposo manda 20 mensajes por tick (800 por segundo) pidiendo ir muy lejos durante 1 segundo
-  for (let t = 0; t < PARAMS.tickRate; t++) {
+  // Un tramposo manda 20 mensajes por tick (800 por segundo) pidiendo ir muy lejos durante 3 segundos:
+  // solo consigue la velocidad normal más los impulsos que le tocan
+  for (let t = 0; t < 3 * PARAMS.tickRate; t++) {
     game.tick(dt);
-    for (let i = 0; i < 20; i++) game.move('a', p.x + 5000, p.y);
+    for (let i = 0; i < 20; i++) game.move('p0', p.x + 5000, p.y);
   }
   const moved = Math.hypot(p.x - start.x, p.y - start.y);
-  assert.ok(moved <= speed * 1.35 + 60, `se movió ${Math.round(moved)} px en 1 s con velocidad ${Math.round(speed)}`);
+  assert.ok(moved <= speed * 1.35 * 3 + 60 + PARAMS.dashDistance * 2, `se movió ${Math.round(moved)} px en 3 s con velocidad ${Math.round(speed)}`);
 });

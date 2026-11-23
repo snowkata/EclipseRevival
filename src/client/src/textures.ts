@@ -2,7 +2,7 @@
 // en una textura al cargar el juego. Si más adelante hay sprites dibujados a mano,
 // basta con cargar imágenes con estas mismas claves.
 import Phaser from 'phaser';
-import { CHARACTERS, ENEMIES, MAPS, type EnemyDef } from '../../shared/data.js';
+import { CHARACTERS, ENEMIES, MAPS, SHRINES, SHRINE_KINDS, type EnemyDef } from '../../shared/data.js';
 import type { ObstacleKind } from '../../shared/world.js';
 
 type G = Phaser.GameObjects.Graphics;
@@ -206,6 +206,8 @@ export const OBSTACLE_ART: Record<ObstacleKind, { w: number; h: number; ox: numb
   arbusto: { w: 50, h: 36, ox: 25, oy: 22 }, hierba: { w: 30, h: 20, ox: 15, oy: 14 },
   flores: { w: 34, h: 24, ox: 17, oy: 16 }, hongos: { w: 30, h: 24, ox: 15, oy: 18 },
   escombros: { w: 56, h: 32, ox: 28, oy: 18 }, grieta: { w: 70, h: 36, ox: 35, oy: 18 }, huesos: { w: 36, h: 22, ox: 18, oy: 12 },
+  cristal: { w: 76, h: 104, ox: 38, oy: 82 }, cactus: { w: 56, h: 84, ox: 28, oy: 72 },
+  duna: { w: 96, h: 30, ox: 48, oy: 18 }, esquirlas: { w: 40, h: 26, ox: 20, oy: 18 },
 };
 
 function obstacle(g: G, kind: ObstacleKind, leaf: number) {
@@ -269,6 +271,31 @@ function obstacle(g: G, kind: ObstacleKind, leaf: number) {
       g.fillStyle(0x9a95a6, 1).fillPoints([P(x - 12, y - 12), P(x - 14, y - 46), P(x + 14, y - 46), P(x + 12, y - 12)], true).fillCircle(x, y - 56, 10);
       g.fillStyle(0x7d7888, 1).fillRect(x + 14, y - 74, 4, 60).fillTriangle(x + 10, y - 74, x + 22, y - 74, x + 16, y - 84);
       break;
+    case 'cristal':
+      shadow(g, x, y + 8, 64);
+      g.fillStyle(0x4a6fb5, 1).fillPoints([P(x - 20, y + 10), P(x - 26, y - 22), P(x - 16, y - 44), P(x - 6, y - 20), P(x - 4, y + 10)], true);
+      g.fillStyle(0x6fd3ff, 1).fillPoints([P(x - 10, y + 12), P(x - 14, y - 40), P(x, y - 76), P(x + 14, y - 40), P(x + 10, y + 12)], true);
+      g.fillStyle(0xb8ecff, 1).fillPoints([P(x - 10, y + 12), P(x - 14, y - 40), P(x, y - 76), P(x - 2, y + 12)], true);
+      g.fillStyle(0x3f8fd6, 1).fillPoints([P(x + 6, y + 10), P(x + 10, y - 26), P(x + 22, y - 50), P(x + 28, y - 18), P(x + 22, y + 10)], true);
+      g.fillStyle(0xffffff, 0.75).fillTriangle(x - 8, y - 38, x - 2, y - 62, x - 4, y - 30);
+      break;
+    case 'cactus':
+      shadow(g, x, y + 5, 36);
+      g.fillStyle(0x3f7d4a, 1).fillRoundedRect(x - 8, y - 58, 16, 64, 8).fillRoundedRect(x - 22, y - 34, 9, 22, 4).fillRect(x - 22, y - 20, 16, 8)
+        .fillRoundedRect(x + 13, y - 46, 9, 26, 4).fillRect(x + 6, y - 28, 16, 8);
+      g.fillStyle(0x5aa866, 1).fillRoundedRect(x - 8, y - 58, 6, 64, 4);
+      g.fillStyle(0xff8fb1, 1).fillCircle(x, y - 60, 4).fillCircle(x + 17, y - 48, 3);
+      break;
+    case 'duna':
+      g.fillStyle(0xffffff, 0.06).fillEllipse(x, y, 92, 20);
+      g.lineStyle(2, 0xffe2a8, 0.22).beginPath();
+      g.arc(x - 16, y + 26, 40, Math.PI * 1.25, Math.PI * 1.75).strokePath();
+      g.beginPath(); g.arc(x + 22, y + 30, 40, Math.PI * 1.3, Math.PI * 1.7).strokePath();
+      break;
+    case 'esquirlas':
+      g.fillStyle(0x6fd3ff, 0.9).fillTriangle(x - 14, y + 6, x - 9, y - 10, x - 4, y + 6).fillTriangle(x + 2, y + 6, x + 8, y - 6, x + 13, y + 6);
+      g.fillStyle(0xb8ecff, 0.9).fillTriangle(x - 14, y + 6, x - 9, y - 10, x - 9, y + 6).fillTriangle(x - 3, y + 7, x, y, x + 3, y + 7);
+      break;
     case 'arbusto':
       g.fillStyle(shade(leaf, 0.75), 1).fillCircle(x - 10, y, 13).fillCircle(x + 10, y, 13).fillCircle(x, y - 6, 15);
       g.fillStyle(shade(leaf, 1.2), 0.8).fillCircle(x - 4, y - 10, 7);
@@ -302,9 +329,28 @@ function obstacle(g: G, kind: ObstacleKind, leaf: number) {
   }
 }
 
+/** Altar: pedestal de piedra con un cristal del color de su bendición (64×84, base en y≈66). */
+function shrine(g: G, color: number, on: boolean) {
+  const x = 32, y = 66;
+  shadow(g, x, y + 6, 60);
+  if (on) g.fillStyle(color, 0.22).fillCircle(x, y - 34, 30);
+  g.fillStyle(0x4c4860, 1).fillRoundedRect(x - 26, y - 4, 52, 16, 4);
+  g.fillStyle(0x6b6684, 1).fillRoundedRect(x - 20, y - 14, 40, 12, 3);
+  g.fillStyle(0x8d88a8, 1).fillRoundedRect(x - 20, y - 14, 40, 4, 2);
+  const c = on ? color : 0x5a5870;
+  g.fillStyle(shade(c, 0.7), 1).fillPoints([P(x, y - 62), P(x + 13, y - 38), P(x, y - 16), P(x - 13, y - 38)], true);
+  g.fillStyle(c, 1).fillPoints([P(x, y - 62), P(x, y - 16), P(x - 13, y - 38)], true);
+  if (on) g.fillStyle(0xffffff, 0.8).fillTriangle(x - 2, y - 56, x - 9, y - 39, x - 3, y - 40);
+}
+
 export function makeTextures(scene: Phaser.Scene) {
   const t = scene.textures;
   if (t.exists('ground-1')) return;
+
+  for (const k of SHRINE_KINDS) {
+    make(scene, `shrine-${k}`, 64, 84, (g) => shrine(g, SHRINES[k].color, true));
+    make(scene, `shrine-${k}-off`, 64, 84, (g) => shrine(g, SHRINES[k].color, false));
+  }
 
   for (const ch of CHARACTERS) make(scene, `player-${ch.id}`, 48, 56, (g) => hero(g, ch.id, ch.color));
   for (const e of ENEMIES) make(scene, `enemy-${e.id}`, (e.radius + 10) * 2, (e.radius + 10) * 2 + 6, (g) => enemy(g, e));

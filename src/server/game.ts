@@ -1,14 +1,14 @@
 // Simulación autoritativa de una partida (RNF12): el servidor calcula
 // enemigos, daño, experiencia y oro; el navegador solo dibuja y manda su posición.
 import {
-  COMBOS, EVENTS, ITEMS, LOOT, PARAMS, PASSIVES, RESISTANCES, WEAPONS,
+  COMBOS, EVENTS, ITEMS, LOOT, PARAMS, PASSIVES, RESISTANCES, SHRINES, WEAPONS,
   characterById, difficultyById, enemyById, mapById, passiveById, weaponById,
   type CharacterDef, type DifficultyDef, type ElementId, type EnemyDef, type EventId,
   type ItemKind, type MapDef, type PassiveAttr, type PermBonus, type WeaponDef,
 } from '../shared/data.js';
 import { enemiesPerWave, enemyHp, orbitAngle, orbitCount, weaponLevelMult, xpToNext } from '../shared/formulas.js';
 import type { Announcement, FxEvent, GameOver, PlayerSnap, Snapshot, UpgradeOption } from '../shared/protocol.js';
-import { ObstacleField, PLAYER_RADIUS } from '../shared/world.js';
+import { ObstacleField, PLAYER_RADIUS, shrinesFor, type Shrine } from '../shared/world.js';
 import { SpatialGrid } from './grid.js';
 
 const W = PARAMS.worldSize;
@@ -29,6 +29,8 @@ export interface SimPlayer {
   weapons: OwnedWeapon[]; passives: Map<number, number>;
   pending: number; offer: UpgradeOption[] | null;
   hurtCd: number; lastMoveAt: number; moveBudget: number;
+  /** Impulso: distancia extra disponible y tiempo que queda sin recibir daño */
+  dashBudget: number; dashLeft: number; dashT: number;
   kills: number; damageDealt: number; damageTaken: number; revives: number;
   weaponDamage: Map<number, number>; weaponKills: Map<number, number>;
   /** Mejoras permanentes del taller y armas desbloqueadas por nivel de cuenta (RF39, RF40) */
@@ -55,7 +57,7 @@ interface Projectile {
 interface Pickup { id: number; type: number; x: number; y: number; value: number; pull: string | null }
 
 interface Zone {
-  id: number; type: 1 | 2; x: number; y: number; r: number; life: number; tick: number;
+  id: number; type: 1 | 2 | 3; x: number; y: number; r: number; life: number; tick: number; vx?: number; vy?: number;
   dmg: number; el: ElementId; owner: string | null; weapon: number; crit: number;
 }
 
@@ -95,6 +97,12 @@ export class Game {
   // Para probar eventos en desarrollo: ER_FIRST_EVENT_ROUND=1 ER_FORCE_EVENT=escolta
   nextEventRound = Number(process.env.ER_FIRST_EVENT_ROUND) || 3;
   meteorCd = 0;
+  /** Peligro propio del mapa: derrumbes en la ciudad, remolinos de arena en el desierto */
+  hazardCd = 12;
+  shrines: (Shrine & { progress: number; cd: number })[] = [];
+  /** Bendiciones de los altares, en segundos restantes */
+  furyT = 0;
+  hasteT = 0;
   // Eventos con objetivo (RF29–RF31)
   eventGoal: boolean | null = null;
   private eventElites = new Set<number>();
@@ -110,6 +118,7 @@ export class Game {
   constructor(mapId: number, difficultyId: number, players: StartPlayer[], private cb: GameCallbacks) {
     this.map = mapById(mapId);
     this.field = new ObstacleField(this.map.id);
+    this.shrines = shrinesFor(this.map.id).map((s) => ({ ...s, progress: 0, cd: 0 }));
     this.diff = difficultyById(difficultyId);
     players.forEach((p, i) => {
       const char = characterById(p.character);
@@ -118,7 +127,7 @@ export class Game {
         id: p.id, name: p.name, char,
         x: W / 2 + Math.cos(a) * 60, y: W / 2 + Math.sin(a) * 60,
         hp: char.hp, level: 1, xp: 0, down: false, revive: 0, connected: true, disconnectedAt: 0,
-        weapons: [], passives: new Map(), pending: 0, offer: null, hurtCd: 0, lastMoveAt: 0, moveBudget: 6,
+        weapons: [], passives: new Map(), pending: 0, offer: null, hurtCd: 0, lastMoveAt: 0, moveBudget: 6, dashBudget: PARAMS.dashDistance, dashLeft: 0, dashT: 0,
         kills: 0, damageDealt: 0, damageTaken: 0, revives: 0, weaponDamage: new Map(), weaponKills: new Map(),
         perm: p.perm ?? {}, allowedWeapons: p.allowedWeapons ? new Set(p.allowedWeapons) : null,
         extraLives: Math.round(p.perm?.revivir ?? 0), choices: [],
@@ -142,12 +151,13 @@ export class Game {
     return v;
   }
   maxHp(p: SimPlayer) { return Math.round(p.char.hp * (1 + (this.passive(p, 'vida') + (p.perm.vida ?? 0)) / 100)); }
-  speed(p: SimPlayer) { return p.char.speed * (1 + (this.passive(p, 'velocidad') + (p.perm.velocidad ?? 0)) / 100 + (p.char.bonus.velocidad ?? 0)); }
+  speed(p: SimPlayer) { return p.char.speed * (1 + (this.passive(p, 'velocidad') + (p.perm.velocidad ?? 0)) / 100 + (p.char.bonus.velocidad ?? 0)) * (this.hasteT > 0 ? 1.25 : 1); }
   area(p: SimPlayer) { return 1 + this.passive(p, 'area') / 100 + (p.char.bonus.area ?? 0); }
-  private rateMult(p: SimPlayer) { return 1 + this.passive(p, 'cadencia') / 100 + (p.char.bonus.cadencia ?? 0); }
+  private rateMult(p: SimPlayer) { return (1 + this.passive(p, 'cadencia') / 100 + (p.char.bonus.cadencia ?? 0)) * (this.hasteT > 0 ? 1.3 : 1); }
   private dmgMult(p: SimPlayer, w: OwnedWeapon) {
     let m = (1 + (this.passive(p, 'dano') + (p.perm.dano ?? 0)) / 100 + (p.char.bonus.dano ?? 0)) * weaponLevelMult(w.def.perLevel, w.level);
     if (w.def.element === 2 && p.char.bonus.fuego) m *= 1 + p.char.bonus.fuego;
+    if (this.furyT > 0) m *= 1.5;
     return m;
   }
   private pickupRadius(p: SimPlayer) { return 50 * (1 + (this.passive(p, 'iman') + (p.perm.iman ?? 0)) / 100); }
@@ -170,8 +180,21 @@ export class Game {
     const dx = x - p.x, dy = y - p.y;
     const d = Math.hypot(dx, dy);
     if (d === 0) return;
-    const max = Math.min(d, p.moveBudget);
+    // Impulso: un paso mucho más largo de lo normal lo inicia si la reserva está llena. La reserva
+    // entera pasa a este impulso y tarda en recargarse, así que no se puede encadenar.
+    if (p.dashT <= 0 && p.dashBudget >= PARAMS.dashDistance * 0.9 && d > speed * 0.1 + 4) {
+      p.dashT = PARAMS.dashSeconds + 0.14; // un instante sin recibir daño
+      p.dashLeft = p.dashBudget;
+      p.dashBudget = 0;
+      this.fxQueue.push({ k: 'dash', id: p.id });
+    }
+    let max = Math.min(d, p.moveBudget);
     p.moveBudget -= max;
+    if (p.dashT > 0 && d > max) {
+      const extra = Math.min(d - max, p.dashLeft);
+      p.dashLeft -= extra;
+      max += extra;
+    }
     const k = max / d;
     p.x = clamp(p.x + dx * k, PLAYER_R, W - PLAYER_R);
     p.y = clamp(p.y + dy * k, PLAYER_R, W - PLAYER_R);
@@ -419,6 +442,74 @@ export class Game {
     }
   }
 
+  // ---------- Altares ----------
+  private updateShrines(dt: number) {
+    this.furyT -= dt;
+    this.hasteT -= dt;
+    const r2 = PARAMS.shrineRadius ** 2;
+    this.shrines.forEach((s, i) => {
+      if (s.cd > 0) { s.cd -= dt; s.progress = 0; return; }
+      const user = [...this.players.values()].find((p) => p.connected && !p.down && dist2(p.x, p.y, s.x, s.y) < r2);
+      s.progress = user ? s.progress + dt / PARAMS.shrineChannel : Math.max(0, s.progress - dt);
+      if (user && s.progress >= 1) this.activateShrine(i, user);
+    });
+  }
+
+  private activateShrine(i: number, user: SimPlayer) {
+    const s = this.shrines[i], def = SHRINES[s.kind];
+    s.progress = 0;
+    s.cd = PARAMS.shrineRecharge;
+    this.fxQueue.push({ k: 'shrine', i, x: s.x, y: s.y });
+    this.cb.announce({ title: def.name, subtitle: `${user.name}: ${def.desc}`, tone: 'info' });
+    switch (s.kind) {
+      case 'furia': this.furyT = def.seconds; break;
+      case 'celeridad': this.hasteT = def.seconds; break;
+      case 'vida':
+        for (const p of this.players.values()) {
+          if (!p.connected) continue;
+          if (p.down) { p.down = false; p.revive = 0; p.hp = Math.round(this.maxHp(p) * 0.5); p.hurtCd = 1.5; user.revives++; this.fxQueue.push({ k: 'revive', id: p.id }); }
+          else p.hp = Math.min(this.maxHp(p), p.hp + this.maxHp(p) * 0.5);
+        }
+        break;
+      case 'fortuna':
+        this.gold += Math.round(40 * this.diff.mReward);
+        for (const g of this.pickups) if (g.type < 10) g.pull = user.id;
+        break;
+    }
+  }
+
+  // ---------- Peligros del mapa ----------
+  private updateHazard(dt: number) {
+    const kind = this.map.hazard;
+    if (kind !== 'derrumbes' && kind !== 'tormenta_arena') return;
+    this.hazardCd -= dt;
+    if (this.hazardCd > 0) return;
+    const alive = [...this.players.values()].filter((p) => p.connected && !p.down);
+    if (kind === 'derrumbes') {
+      // Trozos de edificio que caen cerca de cada jugador; se avisan con una marca en el suelo
+      this.hazardCd = 8;
+      if (this.event === 'meteoros') return;
+      for (const p of alive)
+        this.zones.push({
+          id: this.nextId++, type: 2, x: p.x + rand(-220, 220), y: p.y + rand(-180, 180), r: 80, life: 1.8, tick: 0,
+          dmg: 14 * this.diff.mDmg, el: 1, owner: null, weapon: 0, crit: 0,
+        });
+    } else {
+      // Remolinos de arena que avanzan hacia donde estaba un jugador
+      this.hazardCd = 11;
+      if (this.zones.filter((z) => z.type === 3).length >= 6) return;
+      for (const p of alive) {
+        const a = Math.random() * Math.PI * 2, d = 480;
+        const x = clamp(p.x + Math.cos(a) * d, 0, W), y = clamp(p.y + Math.sin(a) * d, 0, W);
+        const l = Math.hypot(p.x - x, p.y - y) || 1;
+        this.zones.push({
+          id: this.nextId++, type: 3, x, y, r: 75, life: 9, tick: 1, vx: ((p.x - x) / l) * 105, vy: ((p.y - y) / l) * 105,
+          dmg: 7 * this.diff.mDmg, el: 1, owner: null, weapon: 0, crit: 0,
+        });
+      }
+    }
+  }
+
   private anyoneAlive() {
     return [...this.players.values()].some((p) => p.connected && !p.down);
   }
@@ -548,6 +639,7 @@ export class Game {
 
   private hurtPlayer(p: SimPlayer, dmg: number, ignoreCd = false) {
     if (p.down || !p.connected) return;
+    if (p.dashT > 0) return; // durante el impulso se esquiva todo
     if (!ignoreCd && p.hurtCd > 0) return;
     p.hurtCd = 0.35;
     const d = Math.max(1, Math.round(dmg - (p.perm.armadura ?? 0)));
@@ -684,6 +776,8 @@ export class Game {
       this.spawnWave();
     }
     this.updateEscort(dt);
+    this.updateShrines(dt);
+    this.updateHazard(dt);
     if (this.event === 'meteoros') {
       this.meteorCd -= dt;
       if (this.meteorCd <= 0) {
@@ -702,6 +796,9 @@ export class Game {
     for (const p of this.players.values()) {
       if (!p.connected) continue;
       p.hurtCd -= dt;
+      p.dashT -= dt;
+      if (p.dashT <= 0) p.dashLeft = 0;
+      p.dashBudget = Math.min(PARAMS.dashDistance, p.dashBudget + (PARAMS.dashDistance / PARAMS.dashCooldown) * dt);
       if (p.down) {
         const helper = [...this.players.values()].some((o) => o !== p && o.connected && !o.down && dist2(o.x, o.y, p.x, p.y) < 75 * 75);
         p.revive = helper ? p.revive + dt / PARAMS.reviveSeconds : Math.max(0, p.revive - dt * 0.5);
@@ -775,6 +872,17 @@ export class Game {
           z.tick = 0.5;
           for (const e of this.grid.query(z.x, z.y, z.r + 60, this.scratch).slice())
             if (dist2(z.x, z.y, e.x, e.y) <= (z.r + e.def.radius) ** 2) this.damageEnemy(e, z.dmg, z.el, z.owner, z.weapon, z.crit);
+        }
+      } else if (z.type === 3) {
+        // Remolino: se mueve y daña cada medio segundo a quien esté dentro, enemigos incluidos
+        z.x += (z.vx ?? 0) * dt; z.y += (z.vy ?? 0) * dt;
+        z.tick -= dt;
+        if (z.tick <= 0) {
+          z.tick = 0.5;
+          for (const p of this.players.values())
+            if (dist2(z.x, z.y, p.x, p.y) <= (z.r + PLAYER_R) ** 2) this.hurtPlayer(p, z.dmg, true);
+          for (const e of this.grid.query(z.x, z.y, z.r + 60, this.scratch).slice())
+            if (!e.def.boss && dist2(z.x, z.y, e.x, e.y) <= (z.r + e.def.radius) ** 2) { e.slowT = 1; this.damageEnemy(e, 10, 1, null, 0, 0); }
         }
       } else if (z.type === 2 && z.life <= 0) {
         // Impacto del meteoro: daña a jugadores y enemigos (RF28)
@@ -985,6 +1093,8 @@ export class Game {
       roundLeft: this.round >= this.totalRounds ? -1 : Math.max(0, Math.ceil(this.roundLeft)),
       event: this.event, gold: this.gold, kills: this.kills, players, enemies, projectiles, pickups, zones, bossId: this.bossId,
       eventGoal: this.event ? this.eventGoal : null, hunted: this.hunted,
+      shrines: this.shrines.flatMap((s) => [Math.round(Math.min(1, s.progress) * 100), Math.max(0, Math.ceil(s.cd))]),
+      buffs: [Math.max(0, Math.ceil(this.furyT)), Math.max(0, Math.ceil(this.hasteT))],
       escort: this.escort ? [Math.round(this.escort.x), Math.round(this.escort.y), Math.ceil((this.escort.hp / this.escort.maxHp) * 100), this.escort.zx, this.escort.zy] : null,
     });
     if (this.fxQueue.length) { this.cb.fx(this.fxQueue); this.fxQueue = []; }

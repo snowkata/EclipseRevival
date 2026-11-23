@@ -153,6 +153,16 @@ button.on { background: rgba(95, 227, 161, .16); border-color: var(--ok); color:
 .mate .bar > div { background: #ff5468; }
 .mate.down { border-color: var(--danger); box-shadow: 0 0 14px rgba(255, 84, 104, .4); }
 .hud-pending { position: absolute; bottom: 62px; right: 16px; background: linear-gradient(180deg, #ffd874, var(--ember)); color: #2a1200; padding: 8px 14px; border-radius: 10px; text-shadow: none; }
+.minimap { position: absolute; right: 14px; top: 52px; width: 168px; height: 168px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, .16); box-shadow: 0 6px 20px rgba(0, 0, 0, .45); }
+.hud-buffs { position: absolute; top: 124px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
+.buff { padding: 5px 12px; border-radius: 999px; font-size: 13px; background: rgba(8, 7, 20, .7); border: 1px solid; font-variant-numeric: tabular-nums; }
+.buff.fury { border-color: var(--danger); color: #ffc0c8; box-shadow: 0 0 14px rgba(255, 84, 104, .45); }
+.buff.haste { border-color: var(--sky); color: #d9f6ff; box-shadow: 0 0 14px rgba(92, 200, 255, .45); }
+.hud-dash { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.hud-dash .bar { width: 110px; height: 8px; }
+.hud-dash .bar > div { background: #7f8cb8; transition: none; }
+.hud-dash .bar > div.ready { background: linear-gradient(90deg, var(--sky), #d9f6ff); box-shadow: 0 0 10px rgba(92, 200, 255, .8); }
+kbd { font: inherit; font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid rgba(255, 255, 255, .25); background: rgba(8, 7, 20, .66); color: var(--text); }
 .mute { position: fixed; right: 14px; bottom: 14px; z-index: 40; margin: 0; width: 40px; height: 40px; padding: 0; border-radius: 50%; font-size: 17px; background: rgba(8, 7, 20, .7); }
 .mute.off { opacity: .55; }
 
@@ -221,6 +231,8 @@ button.on { background: rgba(95, 227, 161, .16); border-color: var(--ok); color:
   .hud-top { flex-wrap: wrap; gap: 8px; top: 16px; }
   .hud-team { display: none; }
   .hud-hp .bar { width: 160px; }
+  .minimap { width: 104px; height: 104px; top: 96px; }
+  .hud-dash kbd { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .emblem *, .hud-event, .levelup { animation: none !important; }
