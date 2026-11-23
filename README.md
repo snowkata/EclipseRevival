@@ -2,11 +2,13 @@
 
 Videojuego web cooperativo de supervivencia por rondas (1 a 4 jugadores). Las armas atacan solas, los enemigos llegan en hordas y el equipo debe aguantar hasta derrotar al jefe final.
 
+```bash
 Integrantes:
 Angel Horacio Sanchez Torres
 Jorge Antonio Godínez Barajas
 Jesus Enrique Mendoza Villa
 Diego López Álvarez
+```
 
 ## Cómo ejecutarlo
 
